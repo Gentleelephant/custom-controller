@@ -31,10 +31,14 @@ var (
 // Adds the list of known types to Scheme.
 func addKnownTypes(scheme *runtime.Scheme) error {
 	scheme.AddKnownTypes(SchemeGroupVersion,
-		&Propagation{},
-		&PropagationList{},
+		&PropagationPolicy{},
+		&PropagationPolicyList{},
 		&OverridePolicy{},
 		&OverridePolicyList{},
+		&ClusterOverridePolicy{},
+		&ClusterOverridePolicy{},
+		&ClusterPropagationPolicy{},
+		&ClusterPropagationPolicyList{},
 	)
 	metav1.AddToGroupVersion(scheme, SchemeGroupVersion)
 	return nil

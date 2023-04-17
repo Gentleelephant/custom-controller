@@ -33,7 +33,7 @@ type WorkV1Interface interface {
 	WorksGetter
 }
 
-// WorkV1Client is used to interact with features provided by the work.k8s.io group.
+// WorkV1Client is used to interact with features provided by the work.kubesphere.io group.
 type WorkV1Client struct {
 	restClient rest.Interface
 }

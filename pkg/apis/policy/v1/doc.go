@@ -1,3 +1,3 @@
 // +k8s:deepcopy-gen=package
-// +groupName=policy.k8s.io
+// +groupName=policy.kubesphere.io
 package v1

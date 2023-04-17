@@ -19,6 +19,7 @@ const (
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +kubebuilder:subresource:status
+
 // Work defines a list of resources to be deployed on the member cluster.
 type Work struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -78,12 +79,6 @@ type ManifestStatus struct {
 	// +kubebuilder:pruning:PreserveUnknownFields
 	// +optional
 	Status *runtime.RawExtension `json:"status,omitempty"`
-
-	// Health represents the healthy state of the current resource.
-	// There maybe different rules for different resources to achieve health status.
-	// +kubebuilder:validation:Enum=Healthy;Unhealthy;Unknown
-	// +optional
-	Health ResourceHealth `json:"health,omitempty"`
 }
 
 // ResourceIdentifier provides the identifiers needed to interact with any arbitrary object.

@@ -53,15 +53,17 @@ func (f *genericInformer) Lister() cache.GenericLister {
 // TODO extend this to unknown resources with a client pool
 func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource) (GenericInformer, error) {
 	switch resource {
-	// Group=policy.k8s.io, Version=v1
+	// Group=policy.kubesphere.io, Version=v1
 	case v1.SchemeGroupVersion.WithResource("clusteroverridepolicies"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Policy().V1().ClusterOverridePolicies().Informer()}, nil
+	case v1.SchemeGroupVersion.WithResource("clusterpropagationpolicies"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Policy().V1().ClusterPropagationPolicies().Informer()}, nil
 	case v1.SchemeGroupVersion.WithResource("overridepolicies"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Policy().V1().OverridePolicies().Informer()}, nil
-	case v1.SchemeGroupVersion.WithResource("propagations"):
-		return &genericInformer{resource: resource.GroupResource(), informer: f.Policy().V1().Propagations().Informer()}, nil
+	case v1.SchemeGroupVersion.WithResource("propagationpolicies"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Policy().V1().PropagationPolicies().Informer()}, nil
 
-		// Group=work.k8s.io, Version=v1
+		// Group=work.kubesphere.io, Version=v1
 	case workv1.SchemeGroupVersion.WithResource("clusterresourcebindings"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Work().V1().ClusterResourceBindings().Informer()}, nil
 	case workv1.SchemeGroupVersion.WithResource("resourcebindings"):

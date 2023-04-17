@@ -22,6 +22,10 @@ package v1
 // ClusterOverridePolicyLister.
 type ClusterOverridePolicyListerExpansion interface{}
 
+// ClusterPropagationPolicyListerExpansion allows custom methods to be added to
+// ClusterPropagationPolicyLister.
+type ClusterPropagationPolicyListerExpansion interface{}
+
 // OverridePolicyListerExpansion allows custom methods to be added to
 // OverridePolicyLister.
 type OverridePolicyListerExpansion interface{}
@@ -30,10 +34,10 @@ type OverridePolicyListerExpansion interface{}
 // OverridePolicyNamespaceLister.
 type OverridePolicyNamespaceListerExpansion interface{}
 
-// PropagationListerExpansion allows custom methods to be added to
-// PropagationLister.
-type PropagationListerExpansion interface{}
+// PropagationPolicyListerExpansion allows custom methods to be added to
+// PropagationPolicyLister.
+type PropagationPolicyListerExpansion interface{}
 
-// PropagationNamespaceListerExpansion allows custom methods to be added to
-// PropagationNamespaceLister.
-type PropagationNamespaceListerExpansion interface{}
+// PropagationPolicyNamespaceListerExpansion allows custom methods to be added to
+// PropagationPolicyNamespaceLister.
+type PropagationPolicyNamespaceListerExpansion interface{}

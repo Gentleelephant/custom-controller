@@ -1,7 +1,14 @@
 package serve
 
 import (
+	"github.com/Gentleelephant/custom-controller/pkg/api"
+	v1 "github.com/Gentleelephant/custom-controller/pkg/apis/policy/v1"
+	"github.com/Gentleelephant/custom-controller/pkg/controller/policy"
 	"k8s.io/apimachinery/pkg/runtime"
+	"log"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
 var (
@@ -10,50 +17,31 @@ var (
 
 func Start() {
 
-	//获得k8s config,然后创建client
-	//cfg, err := clientcmd.BuildConfigFromFlags("", "/Users/zhangpeng/.kube/config")
-	//if err != nil {
-	//	log.Println("load outside config error")
-	//	inClusterConfig, err := rest.InClusterConfig()
-	//	if err != nil {
-	//		log.Fatalln(err)
-	//	}
-	//	cfg = inClusterConfig
-	//}
-	//log.Println("load config success")
-	//kubeClientset, err := kubernetes.NewForConfig(cfg)
-	//if err != nil {
-	//	log.Fatalln(err)
-	//}
-	//cfg := config.GetConfigOrDie()
-	//exampleClientset, err := clientset.NewForConfig(cfg)
-	//if err != nil {
-	//	log.Fatalln(err)
-	//}
-	////kubeInformerFactory := kubeinformers.NewSharedInformerFactory(kubeClientset, 0)
-	//exampleInformerFactory := exampleinformers.NewSharedInformerFactory(exampleClientset, 0)
-	//
-	//mgr, err := manager.New(cfg, manager.Options{
-	//	Scheme: scheme,
-	//	Port:   9096,
-	//})
-	//if err != nil {
-	//	log.Fatalln(err, "unable to create manager")
-	//}
-	//
-	//err = api.AddToScheme(mgr.GetScheme())
-	//if err != nil {
-	//	log.Fatalln(err, "unable to add scheme")
-	//}
-	//
-	//err = mgr.Add(propagation.NewController(mgr.GetCache(), exampleClientset, exampleInformerFactory.Customcontroller().V1().Foos()))
-	//if err != nil {
-	//	log.Fatalln(err, "unable to add controller")
-	//}
-	//
-	//err = mgr.Start(ctrl.SetupSignalHandler())
-	//if err != nil {
-	//	log.Fatalln(err, "unable to start manager")
-	//}
+	cfg, err := config.GetConfig()
+	if err != nil {
+		log.Fatalln(err)
+	}
 
+	mgr, err := manager.New(cfg, manager.Options{
+		Scheme: scheme,
+		Port:   9096,
+	})
+	err = api.AddToScheme(mgr.GetScheme())
+	if err != nil {
+		log.Fatalln(err, "unable to add scheme")
+	}
+
+	err = ctrl.NewControllerManagedBy(mgr).
+		For(&v1.PropagationPolicy{}).
+		Complete(&policy.PropagationReconciler{Client: mgr.GetClient()})
+	if err != nil {
+		log.Fatalln("create controller failed", err)
+	}
+
+	c := make(chan struct{})
+	err = mgr.Start(ctrl.SetupSignalHandler())
+	if err != nil {
+		log.Fatalln(err, "unable to start manager")
+	}
+	<-c
 }

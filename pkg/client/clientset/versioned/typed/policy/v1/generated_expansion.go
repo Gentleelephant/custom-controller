@@ -20,6 +20,8 @@ package v1
 
 type ClusterOverridePolicyExpansion interface{}
 
+type ClusterPropagationPolicyExpansion interface{}
+
 type OverridePolicyExpansion interface{}
 
-type PropagationExpansion interface{}
+type PropagationPolicyExpansion interface{}

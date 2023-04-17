@@ -29,11 +29,12 @@ import (
 type PolicyV1Interface interface {
 	RESTClient() rest.Interface
 	ClusterOverridePoliciesGetter
+	ClusterPropagationPoliciesGetter
 	OverridePoliciesGetter
-	PropagationsGetter
+	PropagationPoliciesGetter
 }
 
-// PolicyV1Client is used to interact with features provided by the policy.k8s.io group.
+// PolicyV1Client is used to interact with features provided by the policy.kubesphere.io group.
 type PolicyV1Client struct {
 	restClient rest.Interface
 }
@@ -42,12 +43,16 @@ func (c *PolicyV1Client) ClusterOverridePolicies() ClusterOverridePolicyInterfac
 	return newClusterOverridePolicies(c)
 }
 
+func (c *PolicyV1Client) ClusterPropagationPolicies() ClusterPropagationPolicyInterface {
+	return newClusterPropagationPolicies(c)
+}
+
 func (c *PolicyV1Client) OverridePolicies(namespace string) OverridePolicyInterface {
 	return newOverridePolicies(c, namespace)
 }
 
-func (c *PolicyV1Client) Propagations(namespace string) PropagationInterface {
-	return newPropagations(c, namespace)
+func (c *PolicyV1Client) PropagationPolicies(namespace string) PropagationPolicyInterface {
+	return newPropagationPolicies(c, namespace)
 }
 
 // NewForConfig creates a new PolicyV1Client for the given config.

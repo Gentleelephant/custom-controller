@@ -32,12 +32,16 @@ func (c *FakePolicyV1) ClusterOverridePolicies() v1.ClusterOverridePolicyInterfa
 	return &FakeClusterOverridePolicies{c}
 }
 
+func (c *FakePolicyV1) ClusterPropagationPolicies() v1.ClusterPropagationPolicyInterface {
+	return &FakeClusterPropagationPolicies{c}
+}
+
 func (c *FakePolicyV1) OverridePolicies(namespace string) v1.OverridePolicyInterface {
 	return &FakeOverridePolicies{c, namespace}
 }
 
-func (c *FakePolicyV1) Propagations(namespace string) v1.PropagationInterface {
-	return &FakePropagations{c, namespace}
+func (c *FakePolicyV1) PropagationPolicies(namespace string) v1.PropagationPolicyInterface {
+	return &FakePropagationPolicies{c, namespace}
 }
 
 // RESTClient returns a RESTClient that is used to communicate

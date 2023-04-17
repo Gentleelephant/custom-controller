@@ -23,7 +23,7 @@ type PropagationStatus struct {
 
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-type Propagation struct {
+type PropagationPolicy struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
@@ -32,10 +32,10 @@ type Propagation struct {
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-type PropagationList struct {
+type PropagationPolicyList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []Propagation `json:"items"`
+	Items           []PropagationPolicy `json:"items"`
 }
 
 // ResourceSelector the resources will be selected.
@@ -79,8 +79,32 @@ type ClusterAffinity struct {
 	// ClusterNames is the list of clusters to be selected.
 	// +optional
 	ClusterNames []string `json:"clusterNames,omitempty"`
+}
 
-	// ExcludedClusters is the list of clusters to be ignored.
-	// +optional
-	ExcludeClusters []string `json:"exclude,omitempty"`
+// +genclient
+// +genclient:nonNamespaced
+// +kubebuilder:resource:scope="Cluster"
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+// ClusterPropagationPolicy represents the cluster-wide policy that propagates a group of resources to one or more clusters.
+// Different with PropagationPolicy that could only propagate resources in its own namespace, ClusterPropagationPolicy
+// is able to propagate cluster level resources and resources in any namespace other than system reserved ones.
+// System reserved namespaces are: karmada-system, karmada-cluster, karmada-es-*.
+type ClusterPropagationPolicy struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	// Spec represents the desired behavior of ClusterPropagationPolicy.
+	// +required
+	Spec PropagationSpec `json:"spec"`
+}
+
+// +kubebuilder:resource:scope="Cluster"
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+// ClusterPropagationPolicyList contains a list of ClusterPropagationPolicy.
+type ClusterPropagationPolicyList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []ClusterPropagationPolicy `json:"items"`
 }

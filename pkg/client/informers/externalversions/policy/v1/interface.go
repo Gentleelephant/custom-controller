@@ -26,10 +26,12 @@ import (
 type Interface interface {
 	// ClusterOverridePolicies returns a ClusterOverridePolicyInformer.
 	ClusterOverridePolicies() ClusterOverridePolicyInformer
+	// ClusterPropagationPolicies returns a ClusterPropagationPolicyInformer.
+	ClusterPropagationPolicies() ClusterPropagationPolicyInformer
 	// OverridePolicies returns a OverridePolicyInformer.
 	OverridePolicies() OverridePolicyInformer
-	// Propagations returns a PropagationInformer.
-	Propagations() PropagationInformer
+	// PropagationPolicies returns a PropagationPolicyInformer.
+	PropagationPolicies() PropagationPolicyInformer
 }
 
 type version struct {
@@ -48,12 +50,17 @@ func (v *version) ClusterOverridePolicies() ClusterOverridePolicyInformer {
 	return &clusterOverridePolicyInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
 }
 
+// ClusterPropagationPolicies returns a ClusterPropagationPolicyInformer.
+func (v *version) ClusterPropagationPolicies() ClusterPropagationPolicyInformer {
+	return &clusterPropagationPolicyInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
+}
+
 // OverridePolicies returns a OverridePolicyInformer.
 func (v *version) OverridePolicies() OverridePolicyInformer {
 	return &overridePolicyInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }
 
-// Propagations returns a PropagationInformer.
-func (v *version) Propagations() PropagationInformer {
-	return &propagationInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+// PropagationPolicies returns a PropagationPolicyInformer.
+func (v *version) PropagationPolicies() PropagationPolicyInformer {
+	return &propagationPolicyInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }

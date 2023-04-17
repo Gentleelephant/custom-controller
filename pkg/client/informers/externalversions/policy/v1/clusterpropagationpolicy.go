@@ -32,59 +32,58 @@ import (
 	cache "k8s.io/client-go/tools/cache"
 )
 
-// PropagationInformer provides access to a shared informer and lister for
-// Propagations.
-type PropagationInformer interface {
+// ClusterPropagationPolicyInformer provides access to a shared informer and lister for
+// ClusterPropagationPolicies.
+type ClusterPropagationPolicyInformer interface {
 	Informer() cache.SharedIndexInformer
-	Lister() v1.PropagationLister
+	Lister() v1.ClusterPropagationPolicyLister
 }
 
-type propagationInformer struct {
+type clusterPropagationPolicyInformer struct {
 	factory          internalinterfaces.SharedInformerFactory
 	tweakListOptions internalinterfaces.TweakListOptionsFunc
-	namespace        string
 }
 
-// NewPropagationInformer constructs a new informer for Propagation type.
+// NewClusterPropagationPolicyInformer constructs a new informer for ClusterPropagationPolicy type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
-func NewPropagationInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
-	return NewFilteredPropagationInformer(client, namespace, resyncPeriod, indexers, nil)
+func NewClusterPropagationPolicyInformer(client versioned.Interface, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
+	return NewFilteredClusterPropagationPolicyInformer(client, resyncPeriod, indexers, nil)
 }
 
-// NewFilteredPropagationInformer constructs a new informer for Propagation type.
+// NewFilteredClusterPropagationPolicyInformer constructs a new informer for ClusterPropagationPolicy type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
-func NewFilteredPropagationInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
+func NewFilteredClusterPropagationPolicyInformer(client versioned.Interface, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
 	return cache.NewSharedIndexInformer(
 		&cache.ListWatch{
 			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.PolicyV1().Propagations(namespace).List(context.TODO(), options)
+				return client.PolicyV1().ClusterPropagationPolicies().List(context.TODO(), options)
 			},
 			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.PolicyV1().Propagations(namespace).Watch(context.TODO(), options)
+				return client.PolicyV1().ClusterPropagationPolicies().Watch(context.TODO(), options)
 			},
 		},
-		&policyv1.Propagation{},
+		&policyv1.ClusterPropagationPolicy{},
 		resyncPeriod,
 		indexers,
 	)
 }
 
-func (f *propagationInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	return NewFilteredPropagationInformer(client, f.namespace, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
+func (f *clusterPropagationPolicyInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
+	return NewFilteredClusterPropagationPolicyInformer(client, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
 }
 
-func (f *propagationInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&policyv1.Propagation{}, f.defaultInformer)
+func (f *clusterPropagationPolicyInformer) Informer() cache.SharedIndexInformer {
+	return f.factory.InformerFor(&policyv1.ClusterPropagationPolicy{}, f.defaultInformer)
 }
 
-func (f *propagationInformer) Lister() v1.PropagationLister {
-	return v1.NewPropagationLister(f.Informer().GetIndexer())
+func (f *clusterPropagationPolicyInformer) Lister() v1.ClusterPropagationPolicyLister {
+	return v1.NewClusterPropagationPolicyLister(f.Informer().GetIndexer())
 }
