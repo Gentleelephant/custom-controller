@@ -6,8 +6,10 @@ import (
 	"github.com/Gentleelephant/custom-controller/pkg/controller/policy"
 	"k8s.io/apimachinery/pkg/runtime"
 	"log"
+	"os"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
@@ -23,8 +25,9 @@ func Start() {
 	}
 
 	mgr, err := manager.New(cfg, manager.Options{
-		Scheme: scheme,
-		Port:   9096,
+		Scheme:                 scheme,
+		Port:                   9096,
+		HealthProbeBindAddress: "8081",
 	})
 	err = api.AddToScheme(mgr.GetScheme())
 	if err != nil {
@@ -36,6 +39,13 @@ func Start() {
 		Complete(&policy.PropagationReconciler{Client: mgr.GetClient()})
 	if err != nil {
 		log.Fatalln("create controller failed", err)
+	}
+
+	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
+		os.Exit(1)
+	}
+	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+		os.Exit(1)
 	}
 
 	c := make(chan struct{})

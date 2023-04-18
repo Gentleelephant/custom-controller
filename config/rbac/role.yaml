@@ -1,0 +1,55 @@
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  creationTimestamp: null
+  name: manager-role
+rules:
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+- apiGroups:
+  - policy.kubesphere.io
+  resources:
+  - propagationpolicies
+  - resourcebindings
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - policy.kubesphere.io
+  resources:
+  - propagationpolicies/finalizers
+  - resourcebindings/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - policy.kubesphere.io
+  resources:
+  - propagationpolicies/status
+  - resourcebindings/status
+  verbs:
+  - get
+  - patch
+  - update

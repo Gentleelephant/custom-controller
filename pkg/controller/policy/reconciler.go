@@ -21,6 +21,12 @@ type PropagationReconciler struct {
 	client.Client
 }
 
+//+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=policy.kubesphere.io,resources=propagationpolicies;resourcebindings,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=policy.kubesphere.io,resources=propagationpolicies/status;resourcebindings/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=policy.kubesphere.io,resources=propagationpolicies/finalizers;resourcebindings/finalizers,verbs=update
+//+kubebuilder:rbac:groups=core,resources=pods,verbs=get
+
 func (r *PropagationReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	policy := &v1.PropagationPolicy{}
 	err := r.Get(ctx, req.NamespacedName, policy)
