@@ -24,14 +24,18 @@ func Start() {
 		log.Fatalln(err)
 	}
 
-	mgr, err := manager.New(cfg, manager.Options{
+	mgr, err := ctrl.NewManager(cfg, manager.Options{
 		Scheme:                 scheme,
 		Port:                   9096,
-		HealthProbeBindAddress: "8081",
+		MetricsBindAddress:     "0",
+		HealthProbeBindAddress: "0",
 	})
+	if err != nil {
+		log.Fatalln(err, "==>unable to create manager")
+	}
 	err = api.AddToScheme(mgr.GetScheme())
 	if err != nil {
-		log.Fatalln(err, "unable to add scheme")
+		log.Fatalln(err, "==>unable to add scheme")
 	}
 
 	err = ctrl.NewControllerManagedBy(mgr).
