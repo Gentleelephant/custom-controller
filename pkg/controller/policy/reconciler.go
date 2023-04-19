@@ -116,7 +116,7 @@ func (r *PropagationReconciler) createResourceBinding(ctx context.Context, pr *v
 	for _, rb := range resourceBindings {
 		fmt.Printf("resourcebinding: %+v", rb)
 		var rtb wv1.ResourceBinding
-		err := r.Get(ctx, types.NamespacedName{Name: rb.Name, Namespace: rb.Namespace}, &rtb)
+		err := r.Get(ctx, types.NamespacedName{Name: rb.Name, Namespace: pr.Namespace}, &rtb)
 		if errors.IsNotFound(err) {
 			err = r.Create(ctx, rb)
 			if err != nil {
@@ -128,7 +128,7 @@ func (r *PropagationReconciler) createResourceBinding(ctx context.Context, pr *v
 		if err != nil {
 			return err
 		}
-		err = controllerutil.SetOwnerReference(pr, &rtb, schema.Scheme)
+		err = controllerutil.SetControllerReference(pr, &rtb, schema.Scheme)
 		if err != nil {
 			return err
 		}
