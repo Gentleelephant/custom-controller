@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment-test
+spec:
+  selector:
+    matchLabels:
+      app: nginxtest
+  replicas: 1 # 告知 Deployment 运行 2 个与该模板匹配的 Pod
+  template:
+    metadata:
+      labels:
+        app: nginxtest
+    spec:
+      containers:
+        - name: nginxtest
+          image: nginx:1.14.1
+          ports:
+            - containerPort: 80

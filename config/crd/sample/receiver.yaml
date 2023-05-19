@@ -1,0 +1,26 @@
+apiVersion: notification.kubesphere.io/v2beta2
+kind: Receiver
+metadata:
+  name: global-receiver
+  labels:
+    type: tenant
+    user: test
+spec:
+  email:
+    alertSelector:
+      matchExpressions:
+      - key: namespace
+        operator: DoesNotExist
+    emailConfigSelector:
+      matchLabels:
+        type: tenant
+        user: test
+    enabled: true
+    template: nm.default.html
+    subjectTemplate: nm.default.subject
+    tmplType: html
+    tmplText:
+      name: notification-manager-template
+      namespace: kubesphere-monitoring-system
+    to:
+    - test@kubesphere.io

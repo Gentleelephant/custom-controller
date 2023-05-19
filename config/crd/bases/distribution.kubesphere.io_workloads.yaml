@@ -1,0 +1,131 @@
+
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.4.1
+  creationTimestamp: null
+  name: workloads.distribution.kubesphere.io
+spec:
+  group: distribution.kubesphere.io
+  names:
+    kind: Workload
+    listKind: WorkloadList
+    plural: workloads
+    singular: workload
+  scope: Namespaced
+  versions:
+  - name: v1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation
+              of an object. Servers should convert recognized schemas to the latest
+              internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this
+              object represents. Servers may infer this from the endpoint the client
+              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: Spec represents the desired behavior of Work.
+            properties:
+              workloadTemplate:
+                description: Workload represents the manifest workload to be deployed
+                  on managed cluster.
+                properties:
+                  clusters:
+                    items:
+                      type: string
+                    type: array
+                  manifests:
+                    description: Manifests represents a list of Kubernetes resources
+                      to be deployed on the managed cluster.
+                    items:
+                      description: Manifest represents a resource to be deployed on
+                        managed cluster.
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    type: array
+                type: object
+            type: object
+          status:
+            description: Status represents the status of PropagationStatus.
+            properties:
+              clusters:
+                items:
+                  type: string
+                type: array
+              errorMessage:
+                items:
+                  properties:
+                    clusters:
+                      type: string
+                    message:
+                      type: string
+                  type: object
+                type: array
+              identifier:
+                description: Identifier represents the identity of a resource linking
+                  to manifests in spec.
+                properties:
+                  group:
+                    description: Group is the group of the resource.
+                    type: string
+                  kind:
+                    description: Kind is the kind of the resource.
+                    type: string
+                  name:
+                    description: Name is the name of the resource
+                    type: string
+                  namespace:
+                    description: Namespace is the namespace of the resource, the resource
+                      is cluster scoped if the value is empty
+                    type: string
+                  resource:
+                    description: Resource is the resource type of the resource
+                    type: string
+                  version:
+                    description: Version is the version of the resource.
+                    type: string
+                required:
+                - kind
+                - name
+                - resource
+                - version
+                type: object
+              manifestStatuses:
+                description: ManifestStatuses contains running status of manifests
+                  in spec.
+                items:
+                  description: ManifestStatus contains running status of a specific
+                    manifest in spec.
+                  properties:
+                    status:
+                      description: Status reflects running status of current manifest.
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                  type: object
+                type: array
+            required:
+            - errorMessage
+            - identifier
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+status:
+  acceptedNames:
+    kind: ""
+    plural: ""
+  conditions: []
+  storedVersions: []

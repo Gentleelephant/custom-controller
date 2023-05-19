@@ -21,8 +21,8 @@ package externalversions
 import (
 	"fmt"
 
-	v1 "github.com/Gentleelephant/custom-controller/pkg/apis/policy/v1"
-	workv1 "github.com/Gentleelephant/custom-controller/pkg/apis/work/v1"
+	v1alpha1 "github.com/Gentleelephant/custom-controller/pkg/apis/cluster/v1alpha1"
+	v1 "github.com/Gentleelephant/custom-controller/pkg/apis/distribution/v1"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	cache "k8s.io/client-go/tools/cache"
 )
@@ -53,23 +53,17 @@ func (f *genericInformer) Lister() cache.GenericLister {
 // TODO extend this to unknown resources with a client pool
 func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource) (GenericInformer, error) {
 	switch resource {
-	// Group=policy.kubesphere.io, Version=v1
-	case v1.SchemeGroupVersion.WithResource("clusteroverridepolicies"):
-		return &genericInformer{resource: resource.GroupResource(), informer: f.Policy().V1().ClusterOverridePolicies().Informer()}, nil
-	case v1.SchemeGroupVersion.WithResource("clusterpropagationpolicies"):
-		return &genericInformer{resource: resource.GroupResource(), informer: f.Policy().V1().ClusterPropagationPolicies().Informer()}, nil
-	case v1.SchemeGroupVersion.WithResource("overridepolicies"):
-		return &genericInformer{resource: resource.GroupResource(), informer: f.Policy().V1().OverridePolicies().Informer()}, nil
-	case v1.SchemeGroupVersion.WithResource("propagationpolicies"):
-		return &genericInformer{resource: resource.GroupResource(), informer: f.Policy().V1().PropagationPolicies().Informer()}, nil
+	// Group=cluster.kubesphere.io, Version=v1alpha1
+	case v1alpha1.SchemeGroupVersion.WithResource("clusters"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Cluster().V1alpha1().Clusters().Informer()}, nil
 
-		// Group=work.kubesphere.io, Version=v1
-	case workv1.SchemeGroupVersion.WithResource("clusterresourcebindings"):
-		return &genericInformer{resource: resource.GroupResource(), informer: f.Work().V1().ClusterResourceBindings().Informer()}, nil
-	case workv1.SchemeGroupVersion.WithResource("resourcebindings"):
-		return &genericInformer{resource: resource.GroupResource(), informer: f.Work().V1().ResourceBindings().Informer()}, nil
-	case workv1.SchemeGroupVersion.WithResource("works"):
-		return &genericInformer{resource: resource.GroupResource(), informer: f.Work().V1().Works().Informer()}, nil
+		// Group=distribution.kubesphere.io, Version=v1
+	case v1.SchemeGroupVersion.WithResource("clusterresourcedistributions"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Distribution().V1().ClusterResourceDistributions().Informer()}, nil
+	case v1.SchemeGroupVersion.WithResource("resourcedistributions"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Distribution().V1().ResourceDistributions().Informer()}, nil
+	case v1.SchemeGroupVersion.WithResource("workloads"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Distribution().V1().Workloads().Informer()}, nil
 
 	}
 

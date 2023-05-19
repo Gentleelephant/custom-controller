@@ -1,14 +1,40 @@
-apiVersion: policy.kubesphere.io/v1
-kind: PropagationPolicy
+apiVersion: distribution.kubesphere.io/v1
+kind: ResourceDistribution
 metadata:
-  name: nginx-propagation
+  name: my-policy-test
 spec:
   resourceSelectors:
-    - apiVersion: apps/v1
-      kind: Deployment
-      name: nginx
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx-deployment
+    namespace: default
   placement:
     clusterAffinity:
       clusterNames:
         - member1
-        - member2
+#  overrideRules:
+#    - targetCluster:
+#        clusterNames:
+#          - member1
+#      overriders:
+#        plaintext:
+#        - path: /spec/replicas
+#          operator: replace
+#          value: 2
+#      id: nginx-deployment-1
+#    - targetCluster:
+#        clusterNames:
+#          - member3
+#      overriders:
+#        plaintext:
+#          - path: /spec/replicas
+#            operator: replace
+#            value: 3
+#    - targetCluster:
+#        clusterNames:
+#          - member4
+#      overriders:
+#        plaintext:
+#          - path: /spec/replicas
+#            operator: replace
+#            value: 4

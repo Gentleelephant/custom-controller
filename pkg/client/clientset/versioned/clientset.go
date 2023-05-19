@@ -22,8 +22,8 @@ import (
 	"fmt"
 	"net/http"
 
-	policyv1 "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned/typed/policy/v1"
-	workv1 "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned/typed/work/v1"
+	clusterv1alpha1 "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned/typed/cluster/v1alpha1"
+	distributionv1 "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned/typed/distribution/v1"
 	discovery "k8s.io/client-go/discovery"
 	rest "k8s.io/client-go/rest"
 	flowcontrol "k8s.io/client-go/util/flowcontrol"
@@ -31,25 +31,25 @@ import (
 
 type Interface interface {
 	Discovery() discovery.DiscoveryInterface
-	PolicyV1() policyv1.PolicyV1Interface
-	WorkV1() workv1.WorkV1Interface
+	ClusterV1alpha1() clusterv1alpha1.ClusterV1alpha1Interface
+	DistributionV1() distributionv1.DistributionV1Interface
 }
 
 // Clientset contains the clients for groups.
 type Clientset struct {
 	*discovery.DiscoveryClient
-	policyV1 *policyv1.PolicyV1Client
-	workV1   *workv1.WorkV1Client
+	clusterV1alpha1 *clusterv1alpha1.ClusterV1alpha1Client
+	distributionV1  *distributionv1.DistributionV1Client
 }
 
-// PolicyV1 retrieves the PolicyV1Client
-func (c *Clientset) PolicyV1() policyv1.PolicyV1Interface {
-	return c.policyV1
+// ClusterV1alpha1 retrieves the ClusterV1alpha1Client
+func (c *Clientset) ClusterV1alpha1() clusterv1alpha1.ClusterV1alpha1Interface {
+	return c.clusterV1alpha1
 }
 
-// WorkV1 retrieves the WorkV1Client
-func (c *Clientset) WorkV1() workv1.WorkV1Interface {
-	return c.workV1
+// DistributionV1 retrieves the DistributionV1Client
+func (c *Clientset) DistributionV1() distributionv1.DistributionV1Interface {
+	return c.distributionV1
 }
 
 // Discovery retrieves the DiscoveryClient
@@ -96,11 +96,11 @@ func NewForConfigAndClient(c *rest.Config, httpClient *http.Client) (*Clientset,
 
 	var cs Clientset
 	var err error
-	cs.policyV1, err = policyv1.NewForConfigAndClient(&configShallowCopy, httpClient)
+	cs.clusterV1alpha1, err = clusterv1alpha1.NewForConfigAndClient(&configShallowCopy, httpClient)
 	if err != nil {
 		return nil, err
 	}
-	cs.workV1, err = workv1.NewForConfigAndClient(&configShallowCopy, httpClient)
+	cs.distributionV1, err = distributionv1.NewForConfigAndClient(&configShallowCopy, httpClient)
 	if err != nil {
 		return nil, err
 	}
@@ -125,8 +125,8 @@ func NewForConfigOrDie(c *rest.Config) *Clientset {
 // New creates a new Clientset for the given RESTClient.
 func New(c rest.Interface) *Clientset {
 	var cs Clientset
-	cs.policyV1 = policyv1.New(c)
-	cs.workV1 = workv1.New(c)
+	cs.clusterV1alpha1 = clusterv1alpha1.New(c)
+	cs.distributionV1 = distributionv1.New(c)
 
 	cs.DiscoveryClient = discovery.NewDiscoveryClient(c)
 	return &cs

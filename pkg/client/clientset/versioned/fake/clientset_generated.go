@@ -20,10 +20,10 @@ package fake
 
 import (
 	clientset "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned"
-	policyv1 "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned/typed/policy/v1"
-	fakepolicyv1 "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned/typed/policy/v1/fake"
-	workv1 "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned/typed/work/v1"
-	fakeworkv1 "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned/typed/work/v1/fake"
+	clusterv1alpha1 "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned/typed/cluster/v1alpha1"
+	fakeclusterv1alpha1 "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned/typed/cluster/v1alpha1/fake"
+	distributionv1 "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned/typed/distribution/v1"
+	fakedistributionv1 "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned/typed/distribution/v1/fake"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/discovery"
@@ -81,12 +81,12 @@ var (
 	_ testing.FakeClient  = &Clientset{}
 )
 
-// PolicyV1 retrieves the PolicyV1Client
-func (c *Clientset) PolicyV1() policyv1.PolicyV1Interface {
-	return &fakepolicyv1.FakePolicyV1{Fake: &c.Fake}
+// ClusterV1alpha1 retrieves the ClusterV1alpha1Client
+func (c *Clientset) ClusterV1alpha1() clusterv1alpha1.ClusterV1alpha1Interface {
+	return &fakeclusterv1alpha1.FakeClusterV1alpha1{Fake: &c.Fake}
 }
 
-// WorkV1 retrieves the WorkV1Client
-func (c *Clientset) WorkV1() workv1.WorkV1Interface {
-	return &fakeworkv1.FakeWorkV1{Fake: &c.Fake}
+// DistributionV1 retrieves the DistributionV1Client
+func (c *Clientset) DistributionV1() distributionv1.DistributionV1Interface {
+	return &fakedistributionv1.FakeDistributionV1{Fake: &c.Fake}
 }

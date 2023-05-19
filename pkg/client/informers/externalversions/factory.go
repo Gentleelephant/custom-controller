@@ -24,9 +24,9 @@ import (
 	time "time"
 
 	versioned "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned"
+	cluster "github.com/Gentleelephant/custom-controller/pkg/client/informers/externalversions/cluster"
+	distribution "github.com/Gentleelephant/custom-controller/pkg/client/informers/externalversions/distribution"
 	internalinterfaces "github.com/Gentleelephant/custom-controller/pkg/client/informers/externalversions/internalinterfaces"
-	policy "github.com/Gentleelephant/custom-controller/pkg/client/informers/externalversions/policy"
-	work "github.com/Gentleelephant/custom-controller/pkg/client/informers/externalversions/work"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
@@ -244,14 +244,14 @@ type SharedInformerFactory interface {
 	// client.
 	InformerFor(obj runtime.Object, newFunc internalinterfaces.NewInformerFunc) cache.SharedIndexInformer
 
-	Policy() policy.Interface
-	Work() work.Interface
+	Cluster() cluster.Interface
+	Distribution() distribution.Interface
 }
 
-func (f *sharedInformerFactory) Policy() policy.Interface {
-	return policy.New(f, f.namespace, f.tweakListOptions)
+func (f *sharedInformerFactory) Cluster() cluster.Interface {
+	return cluster.New(f, f.namespace, f.tweakListOptions)
 }
 
-func (f *sharedInformerFactory) Work() work.Interface {
-	return work.New(f, f.namespace, f.tweakListOptions)
+func (f *sharedInformerFactory) Distribution() distribution.Interface {
+	return distribution.New(f, f.namespace, f.tweakListOptions)
 }

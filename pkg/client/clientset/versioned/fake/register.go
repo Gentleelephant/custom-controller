@@ -19,8 +19,8 @@ limitations under the License.
 package fake
 
 import (
-	policyv1 "github.com/Gentleelephant/custom-controller/pkg/apis/policy/v1"
-	workv1 "github.com/Gentleelephant/custom-controller/pkg/apis/work/v1"
+	clusterv1alpha1 "github.com/Gentleelephant/custom-controller/pkg/apis/cluster/v1alpha1"
+	distributionv1 "github.com/Gentleelephant/custom-controller/pkg/apis/distribution/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
@@ -32,8 +32,8 @@ var scheme = runtime.NewScheme()
 var codecs = serializer.NewCodecFactory(scheme)
 
 var localSchemeBuilder = runtime.SchemeBuilder{
-	policyv1.AddToScheme,
-	workv1.AddToScheme,
+	clusterv1alpha1.AddToScheme,
+	distributionv1.AddToScheme,
 }
 
 // AddToScheme adds all types of this clientset into the given scheme. This allows composition
