@@ -20,12 +20,8 @@ type ResourceDistributionSpec struct {
 // It should always be reconstructable from the state of the cluster and/or outside world.
 type ResourceDistributionMessage map[string]ClusterSyncStatus
 
-//type SyncStatus struct {
-//	// INSERT ADDITIONAL STATUS FIELDS -- observed state of cluster
-//	Status SyncMessage `json:"clusterSyncStatuses,omitempty"`
-//}
-
 type ClusterSyncStatus struct {
+
 	// 同步时间
 	Datetime *metav1.Time `json:"datetime,omitempty"`
 
@@ -44,8 +40,8 @@ type ResourceDistribution struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   ResourceDistributionSpec    `json:"spec,omitempty"`
-	Status ResourceDistributionMessage `json:"status,omitempty"`
+	Spec ResourceDistributionSpec `json:"spec,omitempty"`
+	//Status ResourceDistributionMessage `json:"status,omitempty"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

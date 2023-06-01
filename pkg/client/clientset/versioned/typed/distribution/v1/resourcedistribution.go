@@ -40,7 +40,6 @@ type ResourceDistributionsGetter interface {
 type ResourceDistributionInterface interface {
 	Create(ctx context.Context, resourceDistribution *v1.ResourceDistribution, opts metav1.CreateOptions) (*v1.ResourceDistribution, error)
 	Update(ctx context.Context, resourceDistribution *v1.ResourceDistribution, opts metav1.UpdateOptions) (*v1.ResourceDistribution, error)
-	UpdateStatus(ctx context.Context, resourceDistribution *v1.ResourceDistribution, opts metav1.UpdateOptions) (*v1.ResourceDistribution, error)
 	Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error
 	DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error
 	Get(ctx context.Context, name string, opts metav1.GetOptions) (*v1.ResourceDistribution, error)
@@ -129,22 +128,6 @@ func (c *resourceDistributions) Update(ctx context.Context, resourceDistribution
 		Namespace(c.ns).
 		Resource("resourcedistributions").
 		Name(resourceDistribution.Name).
-		VersionedParams(&opts, scheme.ParameterCodec).
-		Body(resourceDistribution).
-		Do(ctx).
-		Into(result)
-	return
-}
-
-// UpdateStatus was generated because the type contains a Status member.
-// Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *resourceDistributions) UpdateStatus(ctx context.Context, resourceDistribution *v1.ResourceDistribution, opts metav1.UpdateOptions) (result *v1.ResourceDistribution, err error) {
-	result = &v1.ResourceDistribution{}
-	err = c.client.Put().
-		Namespace(c.ns).
-		Resource("resourcedistributions").
-		Name(resourceDistribution.Name).
-		SubResource("status").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(resourceDistribution).
 		Do(ctx).

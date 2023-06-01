@@ -68,12 +68,14 @@ func Start() {
 	}
 
 	informerFactory := informers.NewSharedInformerFactory(clientsets, time.Second*30)
+
 	controlPlaneInformerManager := genericmanager.NewSingleClusterInformerManager(dynamicClient, 0, ctx.Done())
 	discoveryClient, err := discovery.NewDiscoveryClientForConfig(mgr.GetConfig())
 
 	distributionController := distribution.NewDistributionController(ctx,
 		mgr.GetClient(),
 		kubeClient,
+		clientsets,
 		mgr.GetScheme(),
 		mgr.GetRESTMapper(),
 		dynamicClient,
@@ -83,7 +85,14 @@ func Start() {
 		controlPlaneInformerManager,
 	)
 
-	workloadController := distribution.NewController(ctx, mgr.GetClient(), kubeClient, mgr.GetScheme(), informerFactory.Distribution().V1().Workloads())
+	workloadController := distribution.NewController(ctx,
+		mgr.GetClient(),
+		kubeClient,
+		clientsets,
+		mgr.GetScheme(),
+		informerFactory.Cluster().V1alpha1().Clusters(),
+		mgr.GetRESTMapper(),
+		informerFactory.Distribution().V1().Workloads())
 
 	informerFactory.Start(ctx.Done())
 
@@ -98,19 +107,6 @@ func Start() {
 		log.Fatalln(err)
 		return
 	}
-
-	//c, err := controller.New("resource-distribution", mgr, controller.Options{
-	//	Reconciler: &distribution.Reconciler{Client: mgr.GetClient(),
-	//		RestMapper:    mgr.GetRESTMapper(),
-	//		Scheme:        mgr.GetScheme(),
-	//		DynamicClient: dynamic.NewForConfigOrDie(cfg),
-	//		Cache:         mgr.GetCache(),
-	//	},
-	//})
-	//if err != nil {
-	//	klog.Error("create controller error", "error", err)
-	//	return
-	//}
 
 	//err = c.Watch(&source.Kind{Type: &v1.ResourceDistribution{}}, &handler.EnqueueRequestForObject{})
 	//if err != nil {

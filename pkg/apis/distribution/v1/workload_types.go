@@ -39,7 +39,6 @@ type WorkloadSpec struct {
 
 // WorkloadTemplate represents the manifest workload to be deployed on managed cluster.
 type WorkloadTemplate struct {
-	Clusters []string `json:"clusters,omitempty"`
 	// Manifests represents a list of Kubernetes resources to be deployed on the managed cluster.
 	// +optional
 	Manifests []Manifest `json:"manifests,omitempty"`
@@ -53,16 +52,13 @@ type Manifest struct {
 
 // WorkStatus defines the observed state of Work.
 type WorkloadStatus struct {
-	Clusters []string `json:"clusters,omitempty"`
 	// ManifestStatuses contains running status of manifests in spec.
 	// +optional
-	ManifestStatuses []ManifestStatus `json:"manifestStatuses,omitempty"`
+	ManifestStatuses []Manifest `json:"manifests,omitempty"`
 
 	// Identifier represents the identity of a resource linking to manifests in spec.
 	// +required
-	Identifier ResourceIdentifier `json:"identifier"`
-
-	ErrorMessage []ErrorMessage `json:"errorMessage"`
+	//Identifier ResourceIdentifier `json:"identifier"`
 }
 
 // ManifestStatus contains running status of a specific manifest in spec.

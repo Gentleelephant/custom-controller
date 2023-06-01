@@ -5,6 +5,7 @@ go 1.19
 require (
 	github.com/duke-git/lancet/v2 v2.1.19
 	github.com/evanphx/json-patch v4.12.0+incompatible
+	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/spf13/cobra v1.7.0
 	k8s.io/api v0.25.5
 	k8s.io/apiextensions-apiserver v0.24.2
@@ -36,7 +37,6 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/kr/text v0.2.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.2 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect

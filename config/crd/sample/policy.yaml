@@ -6,12 +6,14 @@ spec:
   resourceSelectors:
     apiVersion: apps/v1
     kind: Deployment
-    name: nginx-deployment
+#    name: nginx-deployment
     namespace: default
   placement:
     clusterAffinity:
       clusterNames:
         - member1
+#        - member2
+#        - member3
 #  overrideRules:
 #    - targetCluster:
 #        clusterNames:

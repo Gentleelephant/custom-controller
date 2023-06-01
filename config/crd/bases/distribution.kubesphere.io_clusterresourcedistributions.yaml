@@ -250,23 +250,6 @@ spec:
                 required:
                 - resourceSelectors
                 type: object
-              status:
-                additionalProperties:
-                  properties:
-                    datetime:
-                      description: 同步时间
-                      format: date-time
-                      type: string
-                    message:
-                      description: 同步信息
-                      type: string
-                    status:
-                      description: 同步状态
-                      type: string
-                  type: object
-                description: It should always be reconstructable from the state of
-                  the cluster and/or outside world.
-                type: object
             type: object
           status:
             additionalProperties:

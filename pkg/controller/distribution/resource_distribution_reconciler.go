@@ -30,13 +30,6 @@ import (
 	"strings"
 )
 
-var (
-	SyncFinalize = "sync.kubesphere.io/finalizer"
-	SyncPolicy   = "sync.kubesphere.io/policy"
-	SyncCluster  = "sync.kubesphere.io/cluster"
-	SyncPolicyId = "sync.kubesphere.io/id"
-)
-
 type Reconciler struct {
 	client.Client
 	Scheme        *runtime.Scheme
@@ -63,8 +56,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	}
 	// Check if the policy instance is marked to be deleted
 	if policy.ObjectMeta.DeletionTimestamp.IsZero() {
-		if !controllerutil.ContainsFinalizer(&policy, SyncFinalize) {
-			policy.ObjectMeta.Finalizers = append(policy.ObjectMeta.Finalizers, SyncFinalize)
+		if !controllerutil.ContainsFinalizer(&policy, Finalizer) {
+			policy.ObjectMeta.Finalizers = append(policy.ObjectMeta.Finalizers, Finalizer)
 			if err = r.updateExternalResources(context.Background(), &policy); err != nil {
 				klog.Error(err)
 				return ctrl.Result{Requeue: true}, err
@@ -72,7 +65,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		}
 	} else {
 		// The object is being deleted
-		if controllerutil.ContainsFinalizer(&policy, SyncFinalize) {
+		if controllerutil.ContainsFinalizer(&policy, Finalizer) {
 			// our finalizer is present, so lets handle any external dependency
 			// before deleting the policy
 			if err = r.deleteExternalResources(ctx, &policy); err != nil {
@@ -81,7 +74,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 				return ctrl.Result{}, err
 			}
 			// remove our finalizer from the list and update it.
-			controllerutil.RemoveFinalizer(&policy, SyncFinalize)
+			controllerutil.RemoveFinalizer(&policy, Finalizer)
 			if err = r.Update(ctx, &policy); err != nil {
 				klog.Error(err)
 				return ctrl.Result{}, err
@@ -126,7 +119,7 @@ func (r *Reconciler) watchObject(ctx context.Context, p *v1.ResourceDistribution
 
 func (r *Reconciler) deleteExternalResources(ctx context.Context, p *v1.ResourceDistribution) error {
 	workList := v1.WorkloadList{}
-	err := r.List(ctx, &workList, client.MatchingLabels{SyncPolicy: p.Name})
+	err := r.List(ctx, &workList, client.MatchingLabels{ResourceDistributionPolicy: p.Name})
 	if err != nil {
 		klog.Error(err)
 		return err
@@ -143,8 +136,8 @@ func (r *Reconciler) deleteExternalResources(ctx context.Context, p *v1.Resource
 
 func (r *Reconciler) updateExternalResources(ctx context.Context, p *v1.ResourceDistribution) error {
 
-	p.Annotations[SyncPolicy] = p.Name
-	p.Annotations[SyncPolicyId] = random.RandLower(8)
+	p.Annotations[ResourceDistributionPolicy] = p.Name
+	p.Annotations[ResourceDistributionId] = random.RandLower(8)
 	over := p.Spec.OverrideRules
 	if len(over) > 0 {
 		for i := range over {
@@ -237,7 +230,7 @@ func (r *Reconciler) generateWorks(ctx context.Context, policy *v1.ResourceDistr
 		works = append(works, *work)
 	}
 	if len(clusterName) > 0 {
-		pid := policy.Annotations[SyncPolicyId]
+		pid := policy.Annotations[ResourceDistributionId]
 		work, err := r.createWork(policy, unstructObjArr, clusterName, pid)
 		if err != nil {
 			klog.Error("create work error:", err)
@@ -379,19 +372,19 @@ func (r *Reconciler) createWork(policy *v1.ResourceDistribution, unstructured []
 			Name:      policy.GetName() + "-" + id,
 			Namespace: policy.GetNamespace(),
 			Annotations: map[string]string{
-				SyncCluster:  strings.Join(clusters, ","),
-				SyncPolicy:   policy.GetName(),
-				SyncPolicyId: policy.Annotations[SyncPolicyId],
+				SyncCluster:                strings.Join(clusters, ","),
+				ResourceDistributionPolicy: policy.GetName(),
+				ResourceDistributionId:     policy.Annotations[ResourceDistributionId],
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				*metav1.NewControllerRef(policy.GetObjectMeta(), policy.GroupVersionKind()),
 			},
 		},
-		Spec: v1.WorkloadSpec{
-			WorkloadTemplate: v1.WorkloadTemplate{
-				Clusters: clusters,
-			},
-		},
+		//Spec: v1.WorkloadSpec{
+		//	WorkloadTemplate: v1.WorkloadTemplate{
+		//		Clusters: clusters,
+		//	},
+		//},
 	}
 
 	for _, u := range unstructured {

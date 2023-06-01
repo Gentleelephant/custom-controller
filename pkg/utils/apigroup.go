@@ -33,6 +33,7 @@ func NewSkippedResourceConfig() *SkippedResourceConfig {
 		GroupVersions:     map[schema.GroupVersion]struct{}{},
 		GroupVersionKinds: map[schema.GroupVersionKind]struct{}{},
 	}
+
 	// disable event by default
 	r.DisableGroup(eventsv1.GroupName)
 	r.DisableGroupVersionKind(v1.Clusterv1alpha1GVK)

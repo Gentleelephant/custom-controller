@@ -1,16 +1,16 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: nginx-deployment-member1
+  name: birdhk-nginx-deployment-test
 spec:
   selector:
     matchLabels:
-      app: nginx-member1
+      app: nginxtest-test
   replicas: 1 # 告知 Deployment 运行 2 个与该模板匹配的 Pod
   template:
     metadata:
       labels:
-        app: nginx-member1
+        app: nginxtest-test
     spec:
       containers:
         - name: nginx

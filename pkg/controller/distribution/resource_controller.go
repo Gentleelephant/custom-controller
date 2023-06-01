@@ -7,6 +7,7 @@ import (
 	"github.com/Gentleelephant/custom-controller/pkg/apis/cluster/v1alpha1"
 	"github.com/Gentleelephant/custom-controller/pkg/apis/distribution"
 	v1 "github.com/Gentleelephant/custom-controller/pkg/apis/distribution/v1"
+	clientset "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned"
 	clusterinformers "github.com/Gentleelephant/custom-controller/pkg/client/informers/externalversions/cluster/v1alpha1"
 	distributioninformers "github.com/Gentleelephant/custom-controller/pkg/client/informers/externalversions/distribution/v1"
 	listers "github.com/Gentleelephant/custom-controller/pkg/client/listers/distribution/v1"
@@ -15,7 +16,6 @@ import (
 	"github.com/Gentleelephant/custom-controller/pkg/utils/keys"
 	set "github.com/duke-git/lancet/v2/datastructure/set"
 	"github.com/duke-git/lancet/v2/maputil"
-	"github.com/duke-git/lancet/v2/random"
 	"github.com/duke-git/lancet/v2/slice"
 	jsonpatch "github.com/evanphx/json-patch"
 	corev1 "k8s.io/api/core/v1"
@@ -33,25 +33,36 @@ import (
 	"k8s.io/client-go/kubernetes"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	toolscache "k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 	"reflect"
+
 	//"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"sort"
 	"strings"
 	"time"
 )
 
 const (
+	ResourceDistributionPolicy = "distribution.kubesphere.io/policy"
+
+	SyncCluster = "distribution.kubesphere.io/cluster"
+
+	ResourceDistributionId = "distribution.kubesphere.io/id"
+
 	ControllerName = "distribution-controller"
 
 	KubernetesReservedNSPrefix = "kube-"
 
 	Finalizer = "distribution.kubesphere.io/finalizer"
+
+	ResourceDistributionAnnotation = "distribution.kubesphere.io/rd"
+
+	WorkloadCLusterAnnotation = "distribution.kubesphere.io/workload-cluster"
+
 	// SuccessSynced is used as part of the Event 'reason' when a Foo is synced
 	SuccessSynced = "Synced"
 	// ErrResourceExists is used as part of the Event 'reason' when a Foo fails
@@ -66,15 +77,17 @@ const (
 )
 
 type DistributionController struct {
-	Client                client.Client
-	kubeclientset         kubernetes.Interface
-	rdLister              listers.ResourceDistributionLister
-	scheme                *runtime.Scheme
-	restMapper            meta.RESTMapper
-	dynamicClient         dynamic.Interface
-	discoverClient        discovery.DiscoveryClient
-	widekeyNamespace      map[string][]string
-	namespaceWidekey      map[string]string
+	Client         client.Client
+	kubeclientset  kubernetes.Interface
+	clientset      clientset.Interface
+	rdLister       listers.ResourceDistributionLister
+	scheme         *runtime.Scheme
+	restMapper     meta.RESTMapper
+	dynamicClient  dynamic.Interface
+	discoverClient discovery.DiscoveryClient
+	//widekeyNamespace      map[string][]string
+	//namespaceWidekey      map[string]string
+	relationStore         *RelationStore
 	rdSynced              toolscache.InformerSynced
 	workqueue             workqueue.RateLimitingInterface
 	recorder              record.EventRecorder
@@ -87,6 +100,7 @@ type DistributionController struct {
 func NewDistributionController(ctx context.Context,
 	client client.Client,
 	kubeclientset kubernetes.Interface,
+	clientset clientset.Interface,
 	schema *runtime.Scheme,
 	restmapper meta.RESTMapper,
 	dynamicClient dynamic.Interface,
@@ -100,24 +114,27 @@ func NewDistributionController(ctx context.Context,
 	eventBroadcaster := record.NewBroadcaster()
 	eventBroadcaster.StartStructuredLogging(0)
 	eventBroadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{Interface: kubeclientset.CoreV1().Events("")})
-	recorder := eventBroadcaster.NewRecorder(schema, corev1.EventSource{Component: controllerAgentName})
+	recorder := eventBroadcaster.NewRecorder(schema, corev1.EventSource{Component: ControllerName})
 
 	controller := &DistributionController{
-		Client:                client,
-		kubeclientset:         kubeclientset,
-		scheme:                schema,
-		restMapper:            restmapper,
-		dynamicClient:         dynamicClient,
-		discoverClient:        discoverClient,
-		rdLister:              rdinformer.Lister(),
-		rdSynced:              rdinformer.Informer().HasSynced,
-		workqueue:             workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "distribution"),
-		recorder:              recorder,
-		InformerManager:       informerManager,
-		widekeyNamespace:      map[string][]string{},
-		namespaceWidekey:      map[string]string{},
+		Client:          client,
+		kubeclientset:   kubeclientset,
+		clientset:       clientset,
+		scheme:          schema,
+		restMapper:      restmapper,
+		dynamicClient:   dynamicClient,
+		discoverClient:  discoverClient,
+		rdLister:        rdinformer.Lister(),
+		rdSynced:        rdinformer.Informer().HasSynced,
+		workqueue:       workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "distribution"),
+		recorder:        recorder,
+		InformerManager: informerManager,
+		//widekeyNamespace:      map[string][]string{},
+		//namespaceWidekey:      map[string]string{},
 		SkippedResourceConfig: utils.NewSkippedResourceConfig(),
 	}
+
+	controller.relationStore = NewRelationStore()
 
 	logger.Info("Setting up ResourceDistribution event handlers")
 	// Set up an event handler for when ResourceDistribution resources change
@@ -150,16 +167,12 @@ func NewDistributionController(ctx context.Context,
 			// TODO:cluster更新label要通知到ResourceDistribution
 			// 跟新了label，ResourceDistribution匹配的cluster就可能发生变化，所以需要通知到ResourceDistribution
 		},
-		DeleteFunc: func(obj interface{}) {
-			// cluster如果已经被删掉，那么已经无法连接到member集群
-			// 因此无需操作
-		},
 	})
 
 	return controller
 }
 
-// 根据传入的Cluster对象，提取出Cluster的name、和label去找ResourceDistribution，并将其入队列
+// 根据传入的Cluster对象，提取出Cluster的name、和label去找到ResourceDistribution，并将其入队列
 func (c *DistributionController) findRDbyCluster(ctx context.Context, obj interface{}) {
 	cluster, ok := obj.(v1alpha1.Cluster)
 	if ok {
@@ -234,15 +247,15 @@ func (c *DistributionController) Run(ctx context.Context, workers int) error {
 	c.stopCh = ctx.Done()
 	logger := klog.FromContext(ctx)
 	// Start the informer factories to begin populating the informer caches
-	//logger.Info("Starting ResourceDistribution controller")
+	logger.Info("Starting ResourceDistribution controller")
 
 	// Wait for the caches to be synced before starting workers
-	//logger.Info("Waiting for informer caches to sync")
+	logger.Info("Waiting for informer caches to sync")
 	if ok := toolscache.WaitForCacheSync(ctx.Done(), c.rdSynced); !ok {
 		return fmt.Errorf("failed to wait for caches to sync")
 	}
 
-	//logger.Info("Starting workers", "count", workers)
+	logger.Info("Starting workers", "count", workers)
 	// Launch two workers to process Foo resources
 	for i := 0; i < workers; i++ {
 		go wait.UntilWithContext(ctx, c.runWorker, time.Second)
@@ -386,9 +399,9 @@ func (c *DistributionController) updateExternalResources(ctx context.Context, rd
 	if rd.Labels == nil {
 		rd.Labels = make(map[string]string)
 	}
-	rd.Labels[SyncPolicy] = rd.Name
-	rd.Labels[SyncPolicyId] = random.RandLower(8)
-	err := c.Client.Update(ctx, rd)
+	rd.Labels[ResourceDistributionPolicy] = rd.Name
+	//rd.Labels[ResourceDistributionId] = random.RandLower(8)
+	_, err := c.clientset.DistributionV1().ResourceDistributions(rd.Namespace).Update(ctx, rd, metav1.UpdateOptions{})
 	if err != nil {
 		klog.Error(err)
 		return err
@@ -398,7 +411,7 @@ func (c *DistributionController) updateExternalResources(ctx context.Context, rd
 
 func (c *DistributionController) deleteExternalResources(ctx context.Context, rd *v1.ResourceDistribution) error {
 	workList := v1.WorkloadList{}
-	err := c.Client.List(ctx, &workList, client.MatchingLabels{SyncPolicy: rd.Name})
+	err := c.Client.List(ctx, &workList, client.MatchingLabels{ResourceDistributionPolicy: rd.Name})
 	if err != nil {
 		klog.Error(err)
 		return err
@@ -414,6 +427,7 @@ func (c *DistributionController) deleteExternalResources(ctx context.Context, rd
 }
 
 func (c *DistributionController) applyWorkloads(ctx context.Context, policy *v1.ResourceDistribution) error {
+	klog.Info("创建Workloads")
 	works, err := c.generateWorks(ctx, policy)
 	if err != nil {
 		klog.Error(err)
@@ -421,25 +435,31 @@ func (c *DistributionController) applyWorkloads(ctx context.Context, policy *v1.
 	}
 	for _, work := range works {
 		var workObj v1.Workload
-		err = c.Client.Get(ctx, types.NamespacedName{Name: work.Name, Namespace: work.Namespace}, &workObj)
-		if err != nil {
-			if errors.IsNotFound(err) {
-				err = c.Client.Create(ctx, &work)
+		retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			err = c.Client.Get(ctx, types.NamespacedName{Name: work.Name, Namespace: work.Namespace}, &workObj)
+			if err != nil {
+				if errors.IsNotFound(err) {
+					work.SetResourceVersion("")
+					err = c.Client.Create(ctx, &work)
+					if err != nil {
+						klog.Error(err)
+						return err
+					}
+				} else {
+					klog.Error(err)
+					return err
+				}
+			}
+			if !reflect.DeepEqual(workObj.Spec, work.Spec) {
+				workObj.Spec = work.Spec
+				err = c.Client.Update(ctx, &workObj)
 				if err != nil {
 					klog.Error(err)
 				}
-				continue
+				return err
 			}
-			klog.Error(err)
-		}
-		if !reflect.DeepEqual(workObj.Spec, work.Spec) {
-			workObj.Spec = work.Spec
-			err = c.Client.Update(ctx, &workObj)
-			if err != nil {
-				klog.Error(err)
-			}
-			return err
-		}
+			return nil
+		})
 	}
 	return err
 }
@@ -450,6 +470,8 @@ func (c *DistributionController) generateWorks(ctx context.Context, policy *v1.R
 		klog.Error(err)
 		return nil, err
 	}
+
+	workV2map := c.createWorkV2(clusterPlacement, policy)
 	overrideRules := policy.Spec.OverrideRules
 	unstructObjArr, err := fetchResourceTemplateByRD(c.dynamicClient, c.restMapper, policy)
 	if err != nil {
@@ -457,9 +479,9 @@ func (c *DistributionController) generateWorks(ctx context.Context, policy *v1.R
 		return nil, err
 	}
 	var works []v1.Workload
-	var arrObj []unstructured.Unstructured
 	var usedCluster []string
 	for _, item := range overrideRules {
+		var arrObj []unstructured.Unstructured
 		var clusterSlice []string
 		for _, unstructObj := range unstructObjArr {
 			deepCopyObj := unstructObj.DeepCopy()
@@ -489,14 +511,15 @@ func (c *DistributionController) generateWorks(ctx context.Context, policy *v1.R
 		}
 		// 如果clusterSlices中存在不属于placement定义的clustername，需要将这部分排除
 		intersection := slice.Intersection(clusterPlacement, clusterSlice)
-		usedCluster = append(usedCluster, intersection...)
-		work, err := c.createWork(policy, arrObj, intersection, item.Id)
-		if err != nil {
-			klog.Error(err)
-			return nil, err
+		for _, s := range intersection {
+			wl := workV2map[s]
+			err = c.fillWorkload(&wl, arrObj)
+			if err != nil {
+				return nil, err
+			}
+			works = append(works, wl)
 		}
-		// 将生成的work，存到works中
-		works = append(works, *work)
+		usedCluster = append(usedCluster, intersection...)
 	}
 	// 将useCluster去重，再和clusterPlacement比较，如果存在不同的，说明还有需要同步的不用override的集群
 	useClusterSet := set.NewSetFromSlice(usedCluster)
@@ -504,16 +527,73 @@ func (c *DistributionController) generateWorks(ctx context.Context, policy *v1.R
 	minusSet := clusterPlacementSet.Minus(useClusterSet)
 	residue := minusSet.Values()
 	if len(residue) > 0 {
-		pid := policy.Labels[SyncPolicyId]
-		work, err := c.createWork(policy, unstructObjArr, residue, pid)
-		if err != nil {
-			klog.Error("create work error:", err)
-			return nil, err
+		for _, cname := range residue {
+			work := workV2map[cname]
+			err = c.fillWorkload(&work, unstructObjArr)
+			if err != nil {
+				return nil, err
+			}
+			works = append(works, work)
 		}
-		works = append(works, *work)
 	}
 	return works, err
 }
+
+func (c *DistributionController) fillWorkload(workload *v1.Workload, uns []unstructured.Unstructured) error {
+	for _, un := range uns {
+		marshalJSON, err := un.MarshalJSON()
+		if err != nil {
+			return err
+		}
+		workload.Spec.WorkloadTemplate.Manifests = append(workload.Spec.WorkloadTemplate.Manifests, v1.Manifest{RawExtension: runtime.RawExtension{Raw: marshalJSON}})
+	}
+	return nil
+}
+
+//func (c *DistributionController) getWorkloadByCluster(ctx context.Context, clusterNames []string, policy *v1.ResourceDistribution) (map[string]v1.Workload, error) {
+//	clusterWorkload := make(map[string]v1.Workload)
+//	var temp v1.WorkloadList
+//	for _, name := range clusterNames {
+//		err := c.Client.List(ctx, &temp, &client.ListOptions{
+//			Namespace: policy.GetNamespace(),
+//			LabelSelector: labels.SelectorFromSet(map[string]string{
+//				WorkloadCLusterAnnotation: name,
+//			}),
+//		})
+//		if err != nil {
+//			klog.Error(err)
+//			return nil, err
+//		}
+//		if len(temp.Items) > 0 {
+//			// 说明查询到了workload
+//			clusterWorkload[name] = temp.Items[0]
+//		} else {
+//			// TODO：如果没有找到对应的workload，说明需要新建一个workload
+//			w := v1.Workload{
+//				TypeMeta: metav1.TypeMeta{
+//					Kind:       "Workload",
+//					APIVersion: "distribution.kubesphere.io/v1",
+//				},
+//				ObjectMeta: metav1.ObjectMeta{
+//					Name:              "workload-" + name,
+//					Namespace:         policy.GetNamespace(),
+//					CreationTimestamp: metav1.Time{},
+//					Labels:            map[string]string{},
+//				},
+//				Spec: v1.WorkloadSpec{
+//					WorkloadTemplate: v1.WorkloadTemplate{
+//						Manifests: []v1.Manifest{},
+//					},
+//				},
+//				Status: v1.WorkloadStatus{},
+//			}
+//			w.Labels[WorkloadCLusterAnnotation] = name
+//			w.Labels[ResourceDistributionAnnotation] = policy.GetName()
+//			clusterWorkload[name] = w
+//		}
+//	}
+//	return clusterWorkload, nil
+//}
 
 func (c *DistributionController) getClusterNameByLabelSelector(selector *metav1.LabelSelector) ([]string, error) {
 	if selector == nil {
@@ -584,7 +664,6 @@ func fetchResourceTemplateByRD(dynamicClient dynamic.Interface, restMapper meta.
 	if err != nil {
 		return nil, err
 	}
-
 	ns := rd.Spec.ResourceSelectors.Namespace
 	name := rd.Spec.ResourceSelectors.Name
 	kind := rd.Spec.ResourceSelectors.Kind
@@ -625,52 +704,47 @@ func getGroupVersionResource(restMapper meta.RESTMapper, gvk schema.GroupVersion
 }
 
 // create work
-func (c *DistributionController) createWork(policy *v1.ResourceDistribution, unstructured []unstructured.Unstructured, clusters []string, id string) (*v1.Workload, error) {
-
-	sort.Strings(clusters)
-	work := v1.Workload{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "Work",
-			APIVersion: distribution.GroupName + "/v1",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      policy.GetName() + "-" + id,
-			Namespace: policy.GetNamespace(),
-			Labels: map[string]string{
-				SyncCluster: strings.Join(clusters, ","),
-				SyncPolicy:  policy.GetName(),
-			},
-			OwnerReferences: []metav1.OwnerReference{
-				*metav1.NewControllerRef(policy, schema.GroupVersionKind{
-					Group:   "distribution.kubesphere.io",
-					Version: "v1",
-					Kind:    "ResourceDistribution",
-				}),
-			},
-		},
-		Spec: v1.WorkloadSpec{
-			WorkloadTemplate: v1.WorkloadTemplate{
-				Clusters: clusters,
-			},
-		},
-	}
-
-	for _, u := range unstructured {
-		deepCopy := u.DeepCopy()
-		marshalJSON, err := deepCopy.MarshalJSON()
-		if err != nil {
-			klog.Error(err)
-			return nil, err
-		}
-		work.Spec.WorkloadTemplate.Manifests = append(work.Spec.WorkloadTemplate.Manifests, v1.Manifest{
-			RawExtension: runtime.RawExtension{
-				Raw: marshalJSON,
-			},
-		})
-	}
-
-	return &work, nil
-}
+//func (c *DistributionController) createWork(policy *v1.ResourceDistribution, unstructured []unstructured.Unstructured, clusters []string, id string) (*v1.Workload, error) {
+//
+//	sort.Strings(clusters)
+//	work := v1.Workload{
+//		TypeMeta: metav1.TypeMeta{
+//			Kind:       "Work",
+//			APIVersion: distribution.GroupName + "/v1",
+//		},
+//		ObjectMeta: metav1.ObjectMeta{
+//			Name:      policy.GetName() + "-" + id,
+//			Namespace: policy.GetNamespace(),
+//			Labels: map[string]string{
+//				SyncCluster: strings.Join(clusters, ","),
+//				ResourceDistributionPolicy:  policy.GetName(),
+//			},
+//			OwnerReferences: []metav1.OwnerReference{
+//				*metav1.NewControllerRef(policy, schema.GroupVersionKind{
+//					Group:   "distribution.kubesphere.io",
+//					Version: "v1",
+//					Kind:    "ResourceDistribution",
+//				}),
+//			},
+//		},
+//	}
+//
+//	for _, u := range unstructured {
+//		deepCopy := u.DeepCopy()
+//		marshalJSON, err := deepCopy.MarshalJSON()
+//		if err != nil {
+//			klog.Error(err)
+//			return nil, err
+//		}
+//		work.Spec.WorkloadTemplate.Manifests = append(work.Spec.WorkloadTemplate.Manifests, v1.Manifest{
+//			RawExtension: runtime.RawExtension{
+//				Raw: marshalJSON,
+//			},
+//		})
+//	}
+//
+//	return &work, nil
+//}
 
 func getOverrideOption(overrideRules *v1.RuleWithCluster) []overrideOption {
 	plaintext := overrideRules.Overriders.Plaintext
@@ -685,30 +759,61 @@ func getOverrideOption(overrideRules *v1.RuleWithCluster) []overrideOption {
 	return overrideOptions
 }
 
-func (c *DistributionController) createWorkWithCluster(ctx context.Context, work *v1.Workload, clusters []string) {
-
-	for _, cluster := range clusters {
-		var clusterObj = v1alpha1.Cluster{}
-		err := c.Client.Get(ctx, types.NamespacedName{Name: cluster}, &clusterObj)
-		if err != nil {
-			klog.Error(err)
+func (c *DistributionController) createWorkV2(clusterNames []string, rd *v1.ResourceDistribution) map[string]v1.Workload {
+	result := make(map[string]v1.Workload)
+	for _, name := range clusterNames {
+		workload := v1.Workload{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "Work",
+				APIVersion: distribution.GroupName + "/v1",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "workload-" + name + "-" + rd.Name,
+				Namespace: rd.Namespace,
+				Labels: map[string]string{
+					SyncCluster:                name,
+					ResourceDistributionPolicy: rd.Name,
+				},
+				OwnerReferences: []metav1.OwnerReference{
+					*metav1.NewControllerRef(rd, schema.GroupVersionKind{
+						Group:   "distribution.kubesphere.io",
+						Version: "v1",
+						Kind:    "ResourceDistribution",
+					}),
+				},
+			},
+			Spec:   v1.WorkloadSpec{},
+			Status: v1.WorkloadStatus{},
 		}
-		// 创建client
-		kubeconfig := clusterObj.Spec.Connection.KubeConfig
-		config, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
-		if err != nil {
-			klog.Error("Failed to create rest config for cluster %s, Error: %v", cluster, err)
-		}
-		tempClient, err := client.New(config, client.Options{})
-		if err != nil {
-			klog.Error("Failed to create client for cluster %s, Error: %v", cluster, err)
-		}
-		err = tempClient.Create(ctx, work)
-		if err != nil {
-			klog.Error("Failed to create work for cluster %s, Error: %v", cluster, err)
-		}
+		result[name] = workload
 	}
+	return result
 }
+
+//func (c *DistributionController) createWorkWithCluster(ctx context.Context, work *v1.Workload, clusters []string) {
+//
+//	for _, cluster := range clusters {
+//		var clusterObj = v1alpha1.Cluster{}
+//		err := c.Client.Get(ctx, types.NamespacedName{Name: cluster}, &clusterObj)
+//		if err != nil {
+//			klog.Error(err)
+//		}
+//		// 创建client
+//		kubeconfig := clusterObj.Spec.Connection.KubeConfig
+//		config, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
+//		if err != nil {
+//			klog.Error("Failed to create rest config for cluster %s, Error: %v", cluster, err)
+//		}
+//		tempClient, err := client.New(config, client.Options{})
+//		if err != nil {
+//			klog.Error("Failed to create client for cluster %s, Error: %v", cluster, err)
+//		}
+//		err = tempClient.Create(ctx, work)
+//		if err != nil {
+//			klog.Error("Failed to create work for cluster %s, Error: %v", cluster, err)
+//		}
+//	}
+//}
 
 func (c *DistributionController) discoverResources(period time.Duration) {
 	//klog.Infof("===>Start to discover resources")
@@ -814,11 +919,9 @@ func (c *DistributionController) EventFilter(obj interface{}) bool {
 		klog.Errorf("Invalid key")
 		return false
 	}
-
 	if IsReservedNamespace(clusterWideKey.Namespace) {
 		return false
 	}
-
 	// if SkippedPropagatingNamespaces is set, skip object events in these namespaces.
 	//if _, ok := c.SkippedPropagatingNamespaces[clusterWideKey.Namespace]; ok {
 	//	return false
@@ -839,21 +942,33 @@ func (c *DistributionController) EventFilter(obj interface{}) bool {
 
 	// 判断这个资源和RD是否对应
 	wideKeyToString := WideKeyToString(clusterWideKey)
-	widekey := c.namespaceWidekey
-	values := maputil.Values(widekey)
 
-	for _, value := range values {
+	resourceKeys := c.relationStore.GetAllResourceKey()
+
+	for _, rkey := range resourceKeys {
 		// 进行前缀匹配
-		if strings.HasPrefix(wideKeyToString, value) {
+		if strings.HasPrefix(wideKeyToString, rkey) {
+			klog.Info("前缀匹配成功")
 			return true
 		}
 	}
-
 	return false
 }
 
-// OnAdd handles object add event and push the object to queue.
-func (c *DistributionController) OnAdd(obj interface{}) {
+func (c *DistributionController) getRdByKeyPrefix(key string) []string {
+
+	var result []string
+	resourceKeys := c.relationStore.GetAllResourceKey()
+	for _, resourceKey := range resourceKeys {
+		if strings.HasPrefix(key, resourceKey) {
+			rdKey := c.relationStore.GetRdsByRe(resourceKey)
+			result = append(result, rdKey...)
+		}
+	}
+	return result
+}
+
+func (c *DistributionController) notifyRD(obj interface{}) {
 	toUnstructured, err := ToUnstructured(obj)
 	if err != nil {
 		klog.Errorf("Failed to transform object, error: %v", err)
@@ -866,13 +981,18 @@ func (c *DistributionController) OnAdd(obj interface{}) {
 		Namespace: toUnstructured.GetNamespace(),
 		Name:      toUnstructured.GetName(),
 	}
-
 	wideKeyToString := WideKeyToString(wideKey)
-
-	rds := c.widekeyNamespace[wideKeyToString]
+	rds := c.getRdByKeyPrefix(wideKeyToString)
 	for _, rd := range rds {
+		klog.Info("匹配成功，通知RD", rd)
 		c.enqueue(rd)
 	}
+}
+
+// OnAdd handles object add event and push the object to queue.
+func (c *DistributionController) OnAdd(obj interface{}) {
+	klog.Info("=======>OnAdd")
+	c.notifyRD(obj)
 }
 
 // OnUpdate handles object update event and push the object to queue.
@@ -888,46 +1008,50 @@ func (c *DistributionController) OnUpdate(oldObj, newObj interface{}) {
 		klog.Errorf("Failed to transform newObj, error: %v", err)
 		return
 	}
-
 	if !utils.SpecificationChanged(unstructuredOldObj, unstructuredNewObj) {
 		klog.V(4).Infof("Ignore update event of object (kind=%s, %s/%s) as specification no change", unstructuredOldObj.GetKind(), unstructuredOldObj.GetNamespace(), unstructuredOldObj.GetName())
 		return
 	}
-	c.OnAdd(newObj)
+	c.notifyRD(newObj)
 }
 
 // OnDelete handles object delete event and push the object to queue.
 func (c *DistributionController) OnDelete(obj interface{}) {
 	klog.Info("=======>OnDelete")
-
-	c.OnAdd(obj)
+	c.notifyRD(obj)
 }
 
 func (c *DistributionController) OnRDAdd(obj interface{}) {
+	klog.Info("=======>OnRDAdd")
 	rd, ok := obj.(*v1.ResourceDistribution)
 	if !ok {
 		return
 	}
-
 	key, err := findReferenceResource(&rd.Spec.ResourceSelectors)
 	if err != nil {
 		klog.Error("findReferenceResource error:", err)
 		return
 	}
 	// group/version/kind/namespace/name
-	stringkey := WideKeyToString(key)
+	resourceKey := WideKeyToString(key)
 	namespaceKey := types.NamespacedName{
 		Namespace: rd.Namespace,
 		Name:      rd.Name,
 	}
-	stringNamespacekey := namespaceKey.String()
-	c.widekeyNamespace[stringkey] = append(c.widekeyNamespace[stringkey], stringNamespacekey)
-	c.namespaceWidekey[stringNamespacekey] = stringkey
+	rdKey := namespaceKey.String()
+	c.relationStore.StoreReToRd(resourceKey, rdKey)
+	c.relationStore.StoreRdToRe(rdKey, resourceKey)
 
-	c.enqueue(stringNamespacekey)
+	klog.Info("OnRDAdd resourceKey:", resourceKey)
+	klog.Info("OnRDAdd rds:", c.relationStore.GetRdsByRe(resourceKey))
+	klog.Info("OnRDAdd re:", c.relationStore.GetReByRd(rdKey))
+
+	c.enqueue(rdKey)
 }
 
 func (c *DistributionController) OnRDUpdate(oldObj, newObj interface{}) {
+
+	klog.Info("=======>OnRDUpdate")
 	unstructuredOldObj, err := utils.ToUnstructured(oldObj)
 	if err != nil {
 		klog.Errorf("Failed to transform oldObj, error: %v", err)
@@ -969,27 +1093,15 @@ func (c *DistributionController) OnRDUpdate(oldObj, newObj interface{}) {
 	}
 	keynewToString := WideKeyToString(keyNew)
 	if keyoldToString != keynewToString {
-		// 删除旧的
-		for i, v := range c.widekeyNamespace[keyoldToString] {
-			if v == key {
-				c.widekeyNamespace[keyoldToString] = append(c.widekeyNamespace[keyoldToString][:i], c.widekeyNamespace[keyoldToString][i+1:]...)
-				break
-			}
-		}
-		// 添加新的
-		c.widekeyNamespace[keynewToString] = append(c.widekeyNamespace[keynewToString], key)
-		c.namespaceWidekey[key] = keynewToString
+		c.relationStore.RemoveRdByRe(keyoldToString, key)
+		c.relationStore.RemoveReByRd(key)
+		c.relationStore.StoreReToRd(keynewToString, key)
+		c.relationStore.StoreRdToRe(key, keynewToString)
 	}
 	c.OnAdd(key)
 }
 
 func (c *DistributionController) OnRDDelete(obj interface{}) {
-
-	//klog.Infof("delete=============>\n")
-	//klog.Info("map:", c.widekeyNamespace)
-	//klog.Infof("delete=============>\n")
-	//klog.Info("map:", c.namespaceWidekey)
-
 	rd, ok := obj.(*v1.ResourceDistribution)
 	if !ok {
 		return
@@ -999,33 +1111,14 @@ func (c *DistributionController) OnRDDelete(obj interface{}) {
 		klog.Error(err)
 		return
 	}
-
 	rdNkey := types.NamespacedName{
 		Namespace: rd.Namespace,
 		Name:      rd.Name,
 	}.String()
-
 	wideKeyToString := WideKeyToString(key)
-	rdNamespacekeys := c.widekeyNamespace[wideKeyToString]
-	// 判断rdNkey是否在rdNamespacekeys中，如果存在则删除
-	for i, rdNamespacekey := range rdNamespacekeys {
-		if rdNamespacekey == rdNkey {
-			rdNamespacekeys = append(rdNamespacekeys[:i], rdNamespacekeys[i+1:]...)
-			break
-		}
-	}
-	if len(rdNamespacekeys) != 0 {
-		c.widekeyNamespace[wideKeyToString] = rdNamespacekeys
-	} else {
-		delete(c.widekeyNamespace, wideKeyToString)
-	}
 
-	delete(c.namespaceWidekey, rdNkey)
-
-	//klog.Infof("deleted=============>\n")
-	//klog.Info("map:", c.widekeyNamespace)
-	//klog.Infof("deleted=============>\n")
-	//klog.Info("map:", c.namespaceWidekey)
+	c.relationStore.RemoveRdByRe(wideKeyToString, rdNkey)
+	c.relationStore.RemoveReByRd(rdNkey)
 
 	c.enqueue(rdNkey)
 }
@@ -1057,14 +1150,9 @@ func findReferenceResource(resourceSelector *v1.ResourceSelector) (keys.ClusterW
 	return key, nil
 }
 
-func (c *DistributionController) findRDbyResourceGVK(widekey string) ([]string, error) {
-
-	rds, ok := c.widekeyNamespace[widekey]
-	if !ok {
-		return nil, fmt.Errorf("can not find resourceDistribution by resourceGVK")
-	}
+func (c *DistributionController) findRDbyResourceGVK(resourceKey string) ([]string, error) {
+	rds := c.relationStore.GetRdsByRe(resourceKey)
 	return rds, nil
-
 }
 
 func ClusterWideKeyFunc(obj interface{}) (interface{}, error) {
@@ -1072,7 +1160,7 @@ func ClusterWideKeyFunc(obj interface{}) (interface{}, error) {
 }
 
 func IsReservedNamespace(namespace string) bool {
-	return strings.HasPrefix(namespace, KubernetesReservedNSPrefix)
+	return strings.HasPrefix(namespace, KubernetesReservedNSPrefix) || strings.HasPrefix(namespace, "kubesphere-")
 }
 
 func WideKeyToString(key keys.ClusterWideKey) string {
