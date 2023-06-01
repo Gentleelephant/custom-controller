@@ -11,7 +11,7 @@ spec:
   placement:
     clusterAffinity:
       clusterNames:
-        - member1
+        - member2
 #        - member2
 #        - member3
 #  overrideRules:

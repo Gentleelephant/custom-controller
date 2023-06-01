@@ -158,7 +158,7 @@ func NewDistributionController(ctx context.Context,
 	//TODO: 在这里需要找到该Cluster被哪些ResourceDistribution所引用，然后将找到的ResourceDistribution入队列
 	cinformer.Informer().AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			// cluster添加需要通知到ResourceDistribution
+			// TODO:cluster添加需要通知到ResourceDistribution
 			// 这里需要找到该Cluster被哪些ResourceDistribution所引用，然后将找到的ResourceDistribution入队列
 			//klog.Info("===>Cluster add event")
 		},
@@ -168,7 +168,6 @@ func NewDistributionController(ctx context.Context,
 			// 跟新了label，ResourceDistribution匹配的cluster就可能发生变化，所以需要通知到ResourceDistribution
 		},
 	})
-
 	return controller
 }
 
@@ -550,51 +549,6 @@ func (c *DistributionController) fillWorkload(workload *v1.Workload, uns []unstr
 	return nil
 }
 
-//func (c *DistributionController) getWorkloadByCluster(ctx context.Context, clusterNames []string, policy *v1.ResourceDistribution) (map[string]v1.Workload, error) {
-//	clusterWorkload := make(map[string]v1.Workload)
-//	var temp v1.WorkloadList
-//	for _, name := range clusterNames {
-//		err := c.Client.List(ctx, &temp, &client.ListOptions{
-//			Namespace: policy.GetNamespace(),
-//			LabelSelector: labels.SelectorFromSet(map[string]string{
-//				WorkloadCLusterAnnotation: name,
-//			}),
-//		})
-//		if err != nil {
-//			klog.Error(err)
-//			return nil, err
-//		}
-//		if len(temp.Items) > 0 {
-//			// 说明查询到了workload
-//			clusterWorkload[name] = temp.Items[0]
-//		} else {
-//			// TODO：如果没有找到对应的workload，说明需要新建一个workload
-//			w := v1.Workload{
-//				TypeMeta: metav1.TypeMeta{
-//					Kind:       "Workload",
-//					APIVersion: "distribution.kubesphere.io/v1",
-//				},
-//				ObjectMeta: metav1.ObjectMeta{
-//					Name:              "workload-" + name,
-//					Namespace:         policy.GetNamespace(),
-//					CreationTimestamp: metav1.Time{},
-//					Labels:            map[string]string{},
-//				},
-//				Spec: v1.WorkloadSpec{
-//					WorkloadTemplate: v1.WorkloadTemplate{
-//						Manifests: []v1.Manifest{},
-//					},
-//				},
-//				Status: v1.WorkloadStatus{},
-//			}
-//			w.Labels[WorkloadCLusterAnnotation] = name
-//			w.Labels[ResourceDistributionAnnotation] = policy.GetName()
-//			clusterWorkload[name] = w
-//		}
-//	}
-//	return clusterWorkload, nil
-//}
-
 func (c *DistributionController) getClusterNameByLabelSelector(selector *metav1.LabelSelector) ([]string, error) {
 	if selector == nil {
 		return nil, nil
@@ -703,49 +657,6 @@ func getGroupVersionResource(restMapper meta.RESTMapper, gvk schema.GroupVersion
 	return restMapping.Resource, nil
 }
 
-// create work
-//func (c *DistributionController) createWork(policy *v1.ResourceDistribution, unstructured []unstructured.Unstructured, clusters []string, id string) (*v1.Workload, error) {
-//
-//	sort.Strings(clusters)
-//	work := v1.Workload{
-//		TypeMeta: metav1.TypeMeta{
-//			Kind:       "Work",
-//			APIVersion: distribution.GroupName + "/v1",
-//		},
-//		ObjectMeta: metav1.ObjectMeta{
-//			Name:      policy.GetName() + "-" + id,
-//			Namespace: policy.GetNamespace(),
-//			Labels: map[string]string{
-//				SyncCluster: strings.Join(clusters, ","),
-//				ResourceDistributionPolicy:  policy.GetName(),
-//			},
-//			OwnerReferences: []metav1.OwnerReference{
-//				*metav1.NewControllerRef(policy, schema.GroupVersionKind{
-//					Group:   "distribution.kubesphere.io",
-//					Version: "v1",
-//					Kind:    "ResourceDistribution",
-//				}),
-//			},
-//		},
-//	}
-//
-//	for _, u := range unstructured {
-//		deepCopy := u.DeepCopy()
-//		marshalJSON, err := deepCopy.MarshalJSON()
-//		if err != nil {
-//			klog.Error(err)
-//			return nil, err
-//		}
-//		work.Spec.WorkloadTemplate.Manifests = append(work.Spec.WorkloadTemplate.Manifests, v1.Manifest{
-//			RawExtension: runtime.RawExtension{
-//				Raw: marshalJSON,
-//			},
-//		})
-//	}
-//
-//	return &work, nil
-//}
-
 func getOverrideOption(overrideRules *v1.RuleWithCluster) []overrideOption {
 	plaintext := overrideRules.Overriders.Plaintext
 	var overrideOptions []overrideOption
@@ -789,31 +700,6 @@ func (c *DistributionController) createWorkV2(clusterNames []string, rd *v1.Reso
 	}
 	return result
 }
-
-//func (c *DistributionController) createWorkWithCluster(ctx context.Context, work *v1.Workload, clusters []string) {
-//
-//	for _, cluster := range clusters {
-//		var clusterObj = v1alpha1.Cluster{}
-//		err := c.Client.Get(ctx, types.NamespacedName{Name: cluster}, &clusterObj)
-//		if err != nil {
-//			klog.Error(err)
-//		}
-//		// 创建client
-//		kubeconfig := clusterObj.Spec.Connection.KubeConfig
-//		config, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
-//		if err != nil {
-//			klog.Error("Failed to create rest config for cluster %s, Error: %v", cluster, err)
-//		}
-//		tempClient, err := client.New(config, client.Options{})
-//		if err != nil {
-//			klog.Error("Failed to create client for cluster %s, Error: %v", cluster, err)
-//		}
-//		err = tempClient.Create(ctx, work)
-//		if err != nil {
-//			klog.Error("Failed to create work for cluster %s, Error: %v", cluster, err)
-//		}
-//	}
-//}
 
 func (c *DistributionController) discoverResources(period time.Duration) {
 	//klog.Infof("===>Start to discover resources")
@@ -1042,10 +928,6 @@ func (c *DistributionController) OnRDAdd(obj interface{}) {
 	c.relationStore.StoreReToRd(resourceKey, rdKey)
 	c.relationStore.StoreRdToRe(rdKey, resourceKey)
 
-	klog.Info("OnRDAdd resourceKey:", resourceKey)
-	klog.Info("OnRDAdd rds:", c.relationStore.GetRdsByRe(resourceKey))
-	klog.Info("OnRDAdd re:", c.relationStore.GetReByRd(rdKey))
-
 	c.enqueue(rdKey)
 }
 
@@ -1148,11 +1030,6 @@ func findReferenceResource(resourceSelector *v1.ResourceSelector) (keys.ClusterW
 	}
 
 	return key, nil
-}
-
-func (c *DistributionController) findRDbyResourceGVK(resourceKey string) ([]string, error) {
-	rds := c.relationStore.GetRdsByRe(resourceKey)
-	return rds, nil
 }
 
 func ClusterWideKeyFunc(obj interface{}) (interface{}, error) {

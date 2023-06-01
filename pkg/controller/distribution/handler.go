@@ -112,7 +112,7 @@ func (c *ClusterEventHandler) EventFilter(obj interface{}) bool {
 	//判断这个资源和RD是否对应
 	wideKeyToString := WideKeyToString(clusterWideKey)
 	clusterResourceKey := c.ClusterName + "/" + wideKeyToString
-	klog.Infof("filter clusterResourceKey:", clusterResourceKey)
+	klog.Infof("filter clusterResourceKey:%s", clusterResourceKey)
 
 	wls, ok := c.Controller.Store.Get(clusterResourceKey)
 	if ok {

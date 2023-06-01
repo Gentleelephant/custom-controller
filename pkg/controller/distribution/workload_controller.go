@@ -367,12 +367,12 @@ func (c *WorkloadController) syncHandler(ctx context.Context, key string) error 
 		if controllerutil.ContainsFinalizer(workload, Finalizer) {
 			// our finalizer is present, so lets handle any external dependency
 			// before deleting the policy
-			go c.deleteExternalResources(ctx, workload)
-			//if err = c.deleteExternalResources(ctx, workload); err != nil {
-			//	// if fail to delete the external dependency here, return with error
-			//	// so that it can be retried
-			//	return err
-			//}
+			//go c.deleteExternalResources(ctx, workload)
+			if err = c.deleteExternalResources(ctx, workload); err != nil {
+				// if fail to delete the external dependency here, return with error
+				// so that it can be retried
+				return err
+			}
 			// remove our finalizer from the list and update it.
 			controllerutil.RemoveFinalizer(workload, Finalizer)
 			if err = c.Client.Update(ctx, workload); err != nil {
@@ -398,23 +398,6 @@ func (c *WorkloadController) syncHandler(ctx context.Context, key string) error 
 	return nil
 }
 
-//func (c *WorkloadController) updateWorkloadStatus(workload *v12.Workload, deployment *appsv1.Deployment) error {
-//	// NEVER modify objects from the store. It's a read-only, local cache.
-//	// You can use DeepCopy() to make a deep copy of original object and modify this copy
-//	// Or create a copy manually for better performance
-//	fooCopy := foo.DeepCopy()
-//	fooCopy.Status.AvailableReplicas = deployment.Status.AvailableReplicas
-//	// If the CustomResourceSubresources feature gate is not enabled,
-//	// we must use Update instead of UpdateStatus to update the Status block of the Foo resource.
-//	// UpdateStatus will not allow changes to the Spec of the resource,
-//	// which is ideal for ensuring nothing other than resource status has been updated.
-//	_, err := c.sampleclientset.SamplecontrollerV1alpha1().Foos(foo.Namespace).UpdateStatus(context.TODO(), fooCopy, metav1.UpdateOptions{})
-//	return err
-//}
-
-// enqueueFoo takes a Foo resource and converts it into a namespace/name
-// string which is then put onto the work queue. This method should *not* be
-// passed resources of any type other than Foo.
 func (c *WorkloadController) enqueue(obj interface{}) {
 	var key string
 	var err error
@@ -435,7 +418,8 @@ func (c *WorkloadController) updateExternalResources(ctx context.Context, worklo
 }
 
 func (c *WorkloadController) deleteExternalResources(ctx context.Context, w *distributionv1.Workload) error {
-	memberClient, err := c.getClusterClient(context.Background(), w)
+	klog.Info("delete member resources")
+	memberClient, err := c.getClusterClient(ctx, w)
 	if err != nil {
 		klog.Error(err)
 		return err
@@ -450,56 +434,15 @@ func (c *WorkloadController) deleteExternalResources(ctx context.Context, w *dis
 		}
 		err = memberClient.Delete(ctx, &workload)
 		if err != nil {
-			klog.Error(err)
 			if errors.IsNotFound(err) {
 				continue
 			}
+			klog.Error("delete resource error:", err)
 		}
 		klog.Info("资源删除成功")
 	}
 	return nil
 }
-
-// handleObject will take any resource implementing metav1.Object and attempt
-// to find the Foo resource that 'owns' it. It does this by looking at the
-// objects metadata.ownerReferences field for an appropriate OwnerReference.
-// It then enqueues that Foo resource to be processed. If the object does not
-// have an appropriate OwnerReference, it will simply be skipped.
-//func (c *WorkloadController) handleObject(obj interface{}) {
-//	var object metav1.Object
-//	var ok bool
-//	logger := klog.FromContext(context.Background())
-//	if object, ok = obj.(metav1.Object); !ok {
-//		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
-//		if !ok {
-//			utilruntime.HandleError(fmt.Errorf("error decoding object, invalid type"))
-//			return
-//		}
-//		object, ok = tombstone.Obj.(metav1.Object)
-//		if !ok {
-//			utilruntime.HandleError(fmt.Errorf("error decoding object tombstone, invalid type"))
-//			return
-//		}
-//		logger.V(4).Info("Recovered deleted object", "resourceName", object.GetName())
-//	}
-//	logger.V(4).Info("Processing object", "object", klog.KObj(object))
-//	if ownerRef := metav1.GetControllerOf(object); ownerRef != nil {
-//		// If this object is not owned by a Foo, we should not do anything more
-//		// with it.
-//		if ownerRef.Kind != "Foo" {
-//			return
-//		}
-//
-//		workload, err := c.workloadLister.Workloads(object.GetNamespace()).Get(ownerRef.Name)
-//		if err != nil {
-//			logger.V(4).Info("Ignore orphaned object", "object", klog.KObj(object), "foo", ownerRef.Name)
-//			return
-//		}
-//
-//		c.enqueueFoo(workload)
-//		return
-//	}
-//}
 
 func (c *WorkloadController) getClusterClient(ctx context.Context, work *distributionv1.Workload) (client.Client, error) {
 	clustersName := work.Labels[SyncCluster]
@@ -580,33 +523,13 @@ func (c *WorkloadController) syncWork(ctx context.Context, work *distributionv1.
 }
 
 func (c *WorkloadController) OnAdd(obj interface{}) {
-	// TODO
-	//workload, ok := obj.(*distributionv1.Workload)
-	//if !ok {
-	//	klog.Error("workload convert failed")
-	//	return
-	//}
 	c.storeResourceKey(obj)
 	c.enqueue(obj)
 }
 
 func (c *WorkloadController) OnUpdate(oldObj, newObj interface{}) {
-	// TODO
+	// TODO 如果workload的同步集群发生变化，需要将原来的集群中的资源删除，然后再向新的集群中同步资源
 	klog.Info("==>Workload OnUpdate")
-	unstructuredOldObj, err := utils.ToUnstructured(oldObj)
-	if err != nil {
-		klog.Errorf("Failed to transform oldObj, error: %v", err)
-		return
-	}
-	unstructuredNewObj, err := utils.ToUnstructured(newObj)
-	if err != nil {
-		klog.Errorf("Failed to transform newObj, error: %v", err)
-		return
-	}
-	if !utils.SpecificationChanged(unstructuredOldObj, unstructuredNewObj) {
-		klog.V(4).Infof("Ignore update event of object (kind=%s, %s/%s) as specification no change", unstructuredOldObj.GetKind(), unstructuredOldObj.GetNamespace(), unstructuredOldObj.GetName())
-		return
-	}
 	c.storeResourceKey(newObj)
 	c.enqueue(newObj)
 }
@@ -651,6 +574,7 @@ func (c *WorkloadController) OnDelete(obj interface{}) {
 
 func (c *WorkloadController) storeResourceKey(obj interface{}) {
 
+	// TODO 当workload的spec发生了变化，那么Store中的键值对也需要发生变化
 	klog.Info("==> storeResourceKey")
 	workoad, ok := obj.(*distributionv1.Workload)
 	if !ok {
