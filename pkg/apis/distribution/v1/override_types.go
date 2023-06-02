@@ -42,8 +42,6 @@ const (
 // RuleWithCluster defines the override rules on clusters.
 type RuleWithCluster struct {
 
-	// +required
-	Id string `json:"id"`
 	// TargetCluster defines restrictions on this override policy
 	// that only applies to resources propagated to the matching clusters.
 	// nil means matching all clusters.

@@ -15,16 +15,11 @@ type ClusterEventHandler struct {
 }
 
 func (c *ClusterEventHandler) GetClusterResourceKey(obj interface{}) (string, error) {
-	key, err := ClusterWideKeyFunc(obj)
+	key, err := keys.ClusterWideKeyFunc(obj)
 	if err != nil {
 		return "", err
 	}
-	clusterWideKey, ok := key.(keys.ClusterWideKey)
-	if !ok {
-		klog.Errorf("Invalid key")
-		return "", err
-	}
-	wideKeyToString := WideKeyToString(clusterWideKey)
+	wideKeyToString := WideKeyToString(key)
 	clusterResourceKey := c.ClusterName + "/" + wideKeyToString
 	return clusterResourceKey, nil
 }
@@ -34,29 +29,10 @@ func (c *ClusterEventHandler) OnAdd(obj interface{}) {
 }
 
 func (c *ClusterEventHandler) OnUpdate(oldObj, newObj interface{}) {
-	//klog.Info("ClusterEventHandler OnUpdate")
-	//// member集群上的资源更新，找到对应的workload，然后通知
-	//clusterResourceKey,err := c.GetClusterResourceKey(newObj)
-	//if err != nil {
-	//	klog.Error("GetClusterResourceKey error:",err)
-	//	return
-	//}
-	//wls, ok := c.Controller.Store.Get(clusterResourceKey)
-	//if !ok {
-	//	return
-	//}
-	//workloads, result := wls.([]string)
-	//if !result {
-	//	return
-	//}
-	//for _, workload := range workloads {
-	//	c.Controller.Enqueue(workload)
-	//}
 	return
 }
 
 func (c *ClusterEventHandler) OnDelete(obj interface{}) {
-	klog.Info("ClusterEventHandler OnDelete")
 	// member集群上的资源删除，找到对应的workload，然后通知
 	clusterResourceKey, err := c.GetClusterResourceKey(obj)
 	if err != nil {
@@ -64,31 +40,20 @@ func (c *ClusterEventHandler) OnDelete(obj interface{}) {
 		return
 	}
 	klog.Info("member集群上的资源删除:", clusterResourceKey)
-	wl, ok := c.Controller.Store.Get(clusterResourceKey)
+	workload, ok := c.Controller.Store.GetWorkloadByResource(clusterResourceKey)
 	if !ok {
 		klog.Error("Get workload namespace/name from store error")
 		return
 	}
-	workload, result := wl.(string)
-	if !result {
-		klog.Error("transform workload namespace/name key error")
-		return
-	}
-	klog.Info("查找到对应的workload:", workload)
 	c.Controller.Workqueue.Add(workload)
 }
 
 func (c *ClusterEventHandler) EventFilter(obj interface{}) bool {
-	key, err := ClusterWideKeyFunc(obj)
+	key, err := keys.ClusterWideKeyFunc(obj)
 	if err != nil {
 		return false
 	}
-	clusterWideKey, ok := key.(keys.ClusterWideKey)
-	if !ok {
-		klog.Errorf("Invalid key")
-		return false
-	}
-	if IsReservedNamespace(clusterWideKey.Namespace) {
+	if IsReservedNamespace(key.Namespace) {
 		return false
 	}
 	// if SkippedPropagatingNamespaces is set, skip object events in these namespaces.
@@ -98,9 +63,6 @@ func (c *ClusterEventHandler) EventFilter(obj interface{}) bool {
 
 	if unstructObj, ok := obj.(*unstructured.Unstructured); ok {
 		switch unstructObj.GroupVersionKind() {
-		// The secret, with type 'kubernetes.io/service-account-token', is created along with `ServiceAccount` should be
-		// prevented from propagating.
-		// Refer to https://github.com/karmada-io/karmada/pull/1525#issuecomment-1091030659 for more details.
 		case corev1.SchemeGroupVersion.WithKind("Secret"):
 			secretType, found, _ := unstructured.NestedString(unstructObj.Object, "type")
 			if found && secretType == string(corev1.SecretTypeServiceAccountToken) {
@@ -109,24 +71,15 @@ func (c *ClusterEventHandler) EventFilter(obj interface{}) bool {
 		}
 	}
 
-	//判断这个资源和RD是否对应
-	wideKeyToString := WideKeyToString(clusterWideKey)
+	//判断这个资源和Workload是否对应
+	wideKeyToString := WideKeyToString(key)
 	clusterResourceKey := c.ClusterName + "/" + wideKeyToString
-	klog.Infof("filter clusterResourceKey:%s", clusterResourceKey)
-
-	wls, ok := c.Controller.Store.Get(clusterResourceKey)
+	_, ok := c.Controller.Store.GetWorkloadByResource(clusterResourceKey)
 	if ok {
-		workloads, result := wls.(string)
-		if !result {
-			klog.Errorf("Invalid workloads")
-			return false
-		}
-		if len(workloads) > 0 {
-			return true
-		}
+		//klog.Info("查找到匹配的workload:", wl)
+		return true
 	}
-
-	return true
+	return false
 }
 
 func (c *ClusterEventHandler) NewResourceEventHandler() cache.ResourceEventHandler {

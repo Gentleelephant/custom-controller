@@ -11,32 +11,22 @@ spec:
   placement:
     clusterAffinity:
       clusterNames:
+        - member1
         - member2
-#        - member2
-#        - member3
-#  overrideRules:
-#    - targetCluster:
-#        clusterNames:
-#          - member1
-#      overriders:
-#        plaintext:
-#        - path: /spec/replicas
-#          operator: replace
-#          value: 2
-#      id: nginx-deployment-1
-#    - targetCluster:
-#        clusterNames:
-#          - member3
-#      overriders:
-#        plaintext:
-#          - path: /spec/replicas
-#            operator: replace
-#            value: 3
-#    - targetCluster:
-#        clusterNames:
-#          - member4
-#      overriders:
-#        plaintext:
-#          - path: /spec/replicas
-#            operator: replace
-#            value: 4
+  overrideRules:
+    - targetCluster:
+        clusterNames:
+          - member1
+      overriders:
+        plaintext:
+        - path: /spec/replicas
+          operator: replace
+          value: 2
+    - targetCluster:
+        clusterNames:
+          - member2
+      overriders:
+        plaintext:
+          - path: /spec/replicas
+            operator: replace
+            value: 3

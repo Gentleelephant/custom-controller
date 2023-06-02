@@ -37,8 +37,6 @@ import (
 	"k8s.io/client-go/util/retry"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
-	"reflect"
-
 	//"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -76,18 +74,22 @@ const (
 	MessageResourceSynced = "ResourceDistribution synced successfully"
 )
 
+type overrideOption struct {
+	Op    string      `json:"op"`
+	Path  string      `json:"path"`
+	Value interface{} `json:"value,omitempty"`
+}
+
 type DistributionController struct {
-	Client         client.Client
-	kubeclientset  kubernetes.Interface
-	clientset      clientset.Interface
-	rdLister       listers.ResourceDistributionLister
-	scheme         *runtime.Scheme
-	restMapper     meta.RESTMapper
-	dynamicClient  dynamic.Interface
-	discoverClient discovery.DiscoveryClient
-	//widekeyNamespace      map[string][]string
-	//namespaceWidekey      map[string]string
-	relationStore         *RelationStore
+	Client                client.Client
+	kubeclientset         kubernetes.Interface
+	clientset             clientset.Interface
+	rdLister              listers.ResourceDistributionLister
+	scheme                *runtime.Scheme
+	restMapper            meta.RESTMapper
+	dynamicClient         dynamic.Interface
+	discoverClient        discovery.DiscoveryClient
+	Store                 DistributionStore
 	rdSynced              toolscache.InformerSynced
 	workqueue             workqueue.RateLimitingInterface
 	recorder              record.EventRecorder
@@ -117,24 +119,22 @@ func NewDistributionController(ctx context.Context,
 	recorder := eventBroadcaster.NewRecorder(schema, corev1.EventSource{Component: ControllerName})
 
 	controller := &DistributionController{
-		Client:          client,
-		kubeclientset:   kubeclientset,
-		clientset:       clientset,
-		scheme:          schema,
-		restMapper:      restmapper,
-		dynamicClient:   dynamicClient,
-		discoverClient:  discoverClient,
-		rdLister:        rdinformer.Lister(),
-		rdSynced:        rdinformer.Informer().HasSynced,
-		workqueue:       workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "distribution"),
-		recorder:        recorder,
-		InformerManager: informerManager,
-		//widekeyNamespace:      map[string][]string{},
-		//namespaceWidekey:      map[string]string{},
+		Client:                client,
+		kubeclientset:         kubeclientset,
+		clientset:             clientset,
+		scheme:                schema,
+		restMapper:            restmapper,
+		dynamicClient:         dynamicClient,
+		discoverClient:        discoverClient,
+		rdLister:              rdinformer.Lister(),
+		rdSynced:              rdinformer.Informer().HasSynced,
+		workqueue:             workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "distribution"),
+		recorder:              recorder,
+		InformerManager:       informerManager,
 		SkippedResourceConfig: utils.NewSkippedResourceConfig(),
 	}
 
-	controller.relationStore = NewRelationStore()
+	controller.Store = NewDistributionStore()
 
 	logger.Info("Setting up ResourceDistribution event handlers")
 	// Set up an event handler for when ResourceDistribution resources change
@@ -143,11 +143,7 @@ func NewDistributionController(ctx context.Context,
 			controller.OnRDAdd(obj)
 		},
 		UpdateFunc: func(old, new interface{}) {
-			namespaceKey, err := NamespaceKeyFunc(new)
-			if err != nil {
-				return
-			}
-			controller.enqueue(namespaceKey)
+			controller.OnRDUpdate(old, new)
 		},
 		DeleteFunc: func(obj interface{}) {
 			controller.OnRDDelete(obj)
@@ -159,13 +155,11 @@ func NewDistributionController(ctx context.Context,
 	cinformer.Informer().AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			// TODO:cluster添加需要通知到ResourceDistribution
-			// 这里需要找到该Cluster被哪些ResourceDistribution所引用，然后将找到的ResourceDistribution入队列
-			//klog.Info("===>Cluster add event")
+			// 直接暴力一点，将所有的ResourceDistribution都入队列！
 		},
 		UpdateFunc: func(old, new interface{}) {
 			// 暂时先不管
 			// TODO:cluster更新label要通知到ResourceDistribution
-			// 跟新了label，ResourceDistribution匹配的cluster就可能发生变化，所以需要通知到ResourceDistribution
 		},
 	})
 	return controller
@@ -228,8 +222,15 @@ func NamespaceKeyFunc(obj interface{}) (string, error) {
 	return key, nil
 }
 
-func (c *DistributionController) enqueue(namespaceKey string) {
-	c.workqueue.Add(namespaceKey)
+func (c *DistributionController) enqueue(obj interface{}) {
+	var key string
+	var err error
+	if key, err = toolscache.MetaNamespaceKeyFunc(obj); err != nil {
+		klog.Info("enqueue error:", err)
+		utilruntime.HandleError(err)
+		return
+	}
+	c.workqueue.Add(key)
 }
 
 func (c *DistributionController) Start(ctx context.Context) error {
@@ -399,7 +400,6 @@ func (c *DistributionController) updateExternalResources(ctx context.Context, rd
 		rd.Labels = make(map[string]string)
 	}
 	rd.Labels[ResourceDistributionPolicy] = rd.Name
-	//rd.Labels[ResourceDistributionId] = random.RandLower(8)
 	_, err := c.clientset.DistributionV1().ResourceDistributions(rd.Namespace).Update(ctx, rd, metav1.UpdateOptions{})
 	if err != nil {
 		klog.Error(err)
@@ -409,18 +409,11 @@ func (c *DistributionController) updateExternalResources(ctx context.Context, rd
 }
 
 func (c *DistributionController) deleteExternalResources(ctx context.Context, rd *v1.ResourceDistribution) error {
-	workList := v1.WorkloadList{}
-	err := c.Client.List(ctx, &workList, client.MatchingLabels{ResourceDistributionPolicy: rd.Name})
+	klog.Info("开始删除Workloads")
+	err := c.Client.DeleteAllOf(ctx, &v1.Workload{}, client.InNamespace(rd.Namespace), client.MatchingLabels{ResourceDistributionPolicy: rd.Name})
 	if err != nil {
-		klog.Error(err)
+		klog.Error("delete workload error:", err)
 		return err
-	}
-	for _, work := range workList.Items {
-		err = c.Client.Delete(ctx, &work)
-		if err != nil {
-			klog.Error(err)
-			return err
-		}
 	}
 	return nil
 }
@@ -449,12 +442,9 @@ func (c *DistributionController) applyWorkloads(ctx context.Context, policy *v1.
 					return err
 				}
 			}
-			if !reflect.DeepEqual(workObj.Spec, work.Spec) {
-				workObj.Spec = work.Spec
-				err = c.Client.Update(ctx, &workObj)
-				if err != nil {
-					klog.Error(err)
-				}
+			work.SetResourceVersion(workObj.GetResourceVersion())
+			err := c.Client.Update(ctx, &work)
+			if err != nil {
 				return err
 			}
 			return nil
@@ -574,7 +564,13 @@ func (c *DistributionController) getClusterName(ctx context.Context, pr *v1.Reso
 		}
 		if pr.Spec.Placement.ClusterAffinity.LabelSelector != nil {
 			var clusterList v1alpha1.ClusterList
-			err := c.Client.List(ctx, &clusterList, client.MatchingLabels(pr.Spec.Placement.ClusterAffinity.LabelSelector.MatchLabels))
+			s, err := metav1.LabelSelectorAsSelector(pr.Spec.Placement.ClusterAffinity.LabelSelector)
+			if err != nil {
+				return nil, err
+			}
+			err = c.Client.List(ctx, &clusterList, &client.ListOptions{
+				LabelSelector: s,
+			})
 			if err != nil {
 				klog.Error(err)
 				return nil, err
@@ -679,7 +675,7 @@ func (c *DistributionController) createWorkV2(clusterNames []string, rd *v1.Reso
 				APIVersion: distribution.GroupName + "/v1",
 			},
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "workload-" + name + "-" + rd.Name,
+				Name:      createWorkloadName(name, rd.Name),
 				Namespace: rd.Namespace,
 				Labels: map[string]string{
 					SyncCluster:                name,
@@ -699,6 +695,13 @@ func (c *DistributionController) createWorkV2(clusterNames []string, rd *v1.Reso
 		result[name] = workload
 	}
 	return result
+}
+
+func createWorkloadName(clusterName, rdname string) string {
+	if clusterName == "" {
+		return "null"
+	}
+	return "workload-" + clusterName + "-" + rdname
 }
 
 func (c *DistributionController) discoverResources(period time.Duration) {
@@ -828,9 +831,7 @@ func (c *DistributionController) EventFilter(obj interface{}) bool {
 
 	// 判断这个资源和RD是否对应
 	wideKeyToString := WideKeyToString(clusterWideKey)
-
-	resourceKeys := c.relationStore.GetAllResourceKey()
-
+	resourceKeys := c.Store.GetDistributionsByResource(wideKeyToString)
 	for _, rkey := range resourceKeys {
 		// 进行前缀匹配
 		if strings.HasPrefix(wideKeyToString, rkey) {
@@ -841,37 +842,21 @@ func (c *DistributionController) EventFilter(obj interface{}) bool {
 	return false
 }
 
-func (c *DistributionController) getRdByKeyPrefix(key string) []string {
-
-	var result []string
-	resourceKeys := c.relationStore.GetAllResourceKey()
-	for _, resourceKey := range resourceKeys {
-		if strings.HasPrefix(key, resourceKey) {
-			rdKey := c.relationStore.GetRdsByRe(resourceKey)
-			result = append(result, rdKey...)
-		}
-	}
-	return result
-}
-
 func (c *DistributionController) notifyRD(obj interface{}) {
-	toUnstructured, err := ToUnstructured(obj)
+	wideKey, err := keys.ClusterWideKeyFunc(obj)
 	if err != nil {
 		klog.Errorf("Failed to transform object, error: %v", err)
 		return
 	}
-	wideKey := keys.ClusterWideKey{
-		Group:     toUnstructured.GroupVersionKind().Group,
-		Version:   toUnstructured.GroupVersionKind().Version,
-		Kind:      toUnstructured.GroupVersionKind().Kind,
-		Namespace: toUnstructured.GetNamespace(),
-		Name:      toUnstructured.GetName(),
-	}
 	wideKeyToString := WideKeyToString(wideKey)
-	rds := c.getRdByKeyPrefix(wideKeyToString)
+	// 要进行前缀匹配
+	rds := c.Store.GetAllDistributions()
 	for _, rd := range rds {
-		klog.Info("匹配成功，通知RD", rd)
-		c.enqueue(rd)
+		// 进行前缀匹配
+		if strings.HasPrefix(wideKeyToString, rd) {
+			klog.Info("前缀匹配成功")
+			c.enqueue(rd)
+		}
 	}
 }
 
@@ -907,33 +892,96 @@ func (c *DistributionController) OnDelete(obj interface{}) {
 	c.notifyRD(obj)
 }
 
-func (c *DistributionController) OnRDAdd(obj interface{}) {
-	klog.Info("=======>OnRDAdd")
-	rd, ok := obj.(*v1.ResourceDistribution)
+// store resource and rd relation
+func (c *DistributionController) storeRelationships(obj interface{}) error {
+	resourceDistribution, ok := obj.(*v1.ResourceDistribution)
 	if !ok {
-		return
+		return fmt.Errorf("obj is not ResourceDistribution")
 	}
-	key, err := findReferenceResource(&rd.Spec.ResourceSelectors)
+	key, err := getResourceKey(resourceDistribution)
+	if err != nil {
+		return err
+	}
+	c.Store.StoreResourcePointToDistribution(key, resourceDistribution.Name)
+	c.Store.StoreDistributionPointToResource(resourceDistribution.Name, key)
+	return nil
+}
+
+func getResourceKey(resourceDistribution *v1.ResourceDistribution) (string, error) {
+	wideKey, err := findReferenceResource(&resourceDistribution.Spec.ResourceSelectors)
 	if err != nil {
 		klog.Error("findReferenceResource error:", err)
+		return "", err
+	}
+	return WideKeyToString(wideKey), nil
+}
+
+// remove resource and rd relation
+func (c *DistributionController) removeRelationships(obj interface{}) error {
+	resourceDistribution, ok := obj.(*v1.ResourceDistribution)
+	if !ok {
+		return fmt.Errorf("obj is not ResourceDistribution")
+	}
+	key, err := getResourceKey(resourceDistribution)
+	if err != nil {
+		return err
+	}
+	c.Store.RemoveDistributionByResource(key, resourceDistribution.Name)
+	c.Store.RemoveResourceByDistribution(resourceDistribution.Name)
+	return nil
+}
+
+func (c DistributionController) removeUnusedWorkload(oldObj, newObj interface{}) {
+	oldRd, ok := oldObj.(*v1.ResourceDistribution)
+	if !ok {
+		klog.Error("oldObj is not ResourceDistribution")
+	}
+	newRd, ok := newObj.(*v1.ResourceDistribution)
+	if !ok {
+		klog.Error("newObj is not ResourceDistribution")
+	}
+	oldClusters, err := c.getClusterName(context.Background(), oldRd)
+	if err != nil {
 		return
 	}
-	// group/version/kind/namespace/name
-	resourceKey := WideKeyToString(key)
-	namespaceKey := types.NamespacedName{
-		Namespace: rd.Namespace,
-		Name:      rd.Name,
+	newClusters, err := c.getClusterName(context.Background(), newRd)
+	if err != nil {
+		return
 	}
-	rdKey := namespaceKey.String()
-	c.relationStore.StoreReToRd(resourceKey, rdKey)
-	c.relationStore.StoreRdToRe(rdKey, resourceKey)
+	// 进行差集比较,然后删除workload
+	difference := slice.Difference(oldClusters, newClusters)
+	if len(difference) > 0 {
+		for _, custerName := range difference {
+			var wl v1.Workload
+			err = c.Client.Get(context.Background(), types.NamespacedName{
+				Namespace: oldRd.Namespace,
+				Name:      createWorkloadName(custerName, oldRd.Name),
+			}, &wl)
+			if err != nil {
+				if errors.IsNotFound(err) {
+					continue
+				}
+				klog.Error(err)
+			}
+			err = c.Client.Delete(context.Background(), &wl)
+			if err != nil {
+				klog.Error(err)
+			}
+		}
+	}
+}
 
-	c.enqueue(rdKey)
+func (c *DistributionController) OnRDAdd(obj interface{}) {
+	// store resource and rd relation
+	err := c.storeRelationships(obj)
+	if err != nil {
+		klog.Error("storeRelationships error:", err)
+	}
+	c.enqueue(obj)
 }
 
 func (c *DistributionController) OnRDUpdate(oldObj, newObj interface{}) {
 
-	klog.Info("=======>OnRDUpdate")
 	unstructuredOldObj, err := utils.ToUnstructured(oldObj)
 	if err != nil {
 		klog.Errorf("Failed to transform oldObj, error: %v", err)
@@ -948,39 +996,18 @@ func (c *DistributionController) OnRDUpdate(oldObj, newObj interface{}) {
 		klog.V(4).Infof("Ignore update event of object (kind=%s, %s/%s) as specification no change", unstructuredOldObj.GetKind(), unstructuredOldObj.GetNamespace(), unstructuredOldObj.GetName())
 		return
 	}
-
-	key := types.NamespacedName{
-		Namespace: unstructuredNewObj.GetNamespace(),
-		Name:      unstructuredNewObj.GetName(),
-	}.String()
-	// TODO: 这个rd如果修改了resourceSelector，那么也需要修改widekeyNamespace
-	resourceDistributionOld, ok := oldObj.(*v1.ResourceDistribution)
-	if !ok {
-		return
-	}
-	keyOld, err := findReferenceResource(&resourceDistributionOld.Spec.ResourceSelectors)
+	err = c.removeRelationships(oldObj)
 	if err != nil {
-		klog.Error(err)
+		klog.Error("removeRelationships error:", err)
 		return
 	}
-	keyoldToString := WideKeyToString(keyOld)
-	resourceDistributionNew, ok := newObj.(*v1.ResourceDistribution)
-	if ok {
-		return
-	}
-	keyNew, err := findReferenceResource(&resourceDistributionNew.Spec.ResourceSelectors)
+	err = c.storeRelationships(newObj)
 	if err != nil {
-		klog.Error(err)
+		klog.Error("storeRelationships error:", err)
 		return
 	}
-	keynewToString := WideKeyToString(keyNew)
-	if keyoldToString != keynewToString {
-		c.relationStore.RemoveRdByRe(keyoldToString, key)
-		c.relationStore.RemoveReByRd(key)
-		c.relationStore.StoreReToRd(keynewToString, key)
-		c.relationStore.StoreRdToRe(key, keynewToString)
-	}
-	c.OnAdd(key)
+	c.removeUnusedWorkload(oldObj, newObj)
+	c.enqueue(newObj)
 }
 
 func (c *DistributionController) OnRDDelete(obj interface{}) {
@@ -998,25 +1025,19 @@ func (c *DistributionController) OnRDDelete(obj interface{}) {
 		Name:      rd.Name,
 	}.String()
 	wideKeyToString := WideKeyToString(key)
-
-	c.relationStore.RemoveRdByRe(wideKeyToString, rdNkey)
-	c.relationStore.RemoveReByRd(rdNkey)
-
-	c.enqueue(rdNkey)
+	c.Store.RemoveDistributionByResource(wideKeyToString, rdNkey)
+	c.Store.RemoveResourceByDistribution(rdNkey)
+	c.enqueue(obj)
 }
 
 func findReferenceResource(resourceSelector *v1.ResourceSelector) (keys.ClusterWideKey, error) {
-
 	if resourceSelector.APIVersion == "" {
 		return keys.ClusterWideKey{}, fmt.Errorf("resourceSelector APIVersion is empty")
 	}
-
 	if resourceSelector.Kind == "" {
 		return keys.ClusterWideKey{}, fmt.Errorf("resourceSelector Kind is empty")
 	}
-
 	apiversion := strings.Split(resourceSelector.APIVersion, "/")
-	// TODO: 删除rd时，清除widekeyNamespace
 	key := keys.ClusterWideKey{
 		Kind:      resourceSelector.Kind,
 		Name:      resourceSelector.Name,
@@ -1028,7 +1049,6 @@ func findReferenceResource(resourceSelector *v1.ResourceSelector) (keys.ClusterW
 	} else {
 		key.Version = apiversion[0]
 	}
-
 	return key, nil
 }
 
@@ -1041,5 +1061,14 @@ func IsReservedNamespace(namespace string) bool {
 }
 
 func WideKeyToString(key keys.ClusterWideKey) string {
+	if key.Group == "" {
+		if key.Namespace == "" {
+			return fmt.Sprintf("%s/%s/%s", key.Version, key.Kind, key.Name)
+		}
+		return fmt.Sprintf("%s/%s/%s/%s", key.Version, key.Kind, key.Namespace, key.Name)
+	}
+	if key.Namespace == "" {
+		return fmt.Sprintf("%s/%s/%s/%s", key.Group, key.Version, key.Kind, key.Name)
+	}
 	return fmt.Sprintf("%s/%s/%s/%s/%s", key.Group, key.Version, key.Kind, key.Namespace, key.Name)
 }

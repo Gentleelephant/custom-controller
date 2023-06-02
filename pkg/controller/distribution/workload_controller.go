@@ -13,7 +13,6 @@ import (
 	"github.com/Gentleelephant/custom-controller/pkg/utils"
 	"github.com/Gentleelephant/custom-controller/pkg/utils/genericmanager"
 	"github.com/Gentleelephant/custom-controller/pkg/utils/keys"
-	kvcache "github.com/patrickmn/go-cache"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -56,7 +55,7 @@ type WorkloadController struct {
 	EventHandler          toolscache.ResourceEventHandler
 	SkippedResourceConfig *utils.SkippedResourceConfig
 	InformerManager       map[string]genericmanager.SingleClusterInformerManager
-	Store                 *kvcache.Cache
+	Store                 WorkloadStore
 	stopCh                <-chan struct{}
 }
 
@@ -96,7 +95,7 @@ func NewController(
 	}
 
 	controller.InformerManager = make(map[string]genericmanager.SingleClusterInformerManager)
-	controller.Store = kvcache.New(kvcache.NoExpiration, kvcache.NoExpiration)
+	controller.Store = NewWorkloadStore()
 	//logger.Info("Setting up Workload event handlers")
 	// Set up an event handler for when Foo resources change
 	workloadInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -193,7 +192,7 @@ func (c *WorkloadController) gvrDisabled(gvr schema.GroupVersionResource) bool {
 		return true
 	}
 
-	if c.allowGvr(gvr) {
+	if !c.allowGvr(gvr) {
 		return true
 	}
 
@@ -213,13 +212,14 @@ func (c *WorkloadController) gvrDisabled(gvr schema.GroupVersionResource) bool {
 }
 
 func (c *WorkloadController) allowGvr(gvr schema.GroupVersionResource) bool {
-	testgvr := schema.GroupVersionResource{
-		Group:    "apps",
-		Version:  "v1",
-		Resource: "deployments",
+	testgvr := []schema.GroupVersionResource{
+		{Group: "apps", Version: "v1", Resource: "deployments"},
+		{Group: "", Version: "v1", Resource: "namespaces"},
 	}
-	if gvr != testgvr {
-		return true
+	for _, g := range testgvr {
+		if g == gvr {
+			return true
+		}
 	}
 	return false
 }
@@ -418,7 +418,13 @@ func (c *WorkloadController) updateExternalResources(ctx context.Context, worklo
 }
 
 func (c *WorkloadController) deleteExternalResources(ctx context.Context, w *distributionv1.Workload) error {
-	klog.Info("delete member resources")
+	klog.Info("开始删除member resources")
+	namespaceKey, err := toolscache.MetaNamespaceKeyFunc(w)
+	if err != nil {
+		klog.Error("get namespace key error:", err)
+		return err
+	}
+	c.Store.RemoveResourceWorkloadRelation(namespaceKey)
 	memberClient, err := c.getClusterClient(ctx, w)
 	if err != nil {
 		klog.Error(err)
@@ -432,14 +438,18 @@ func (c *WorkloadController) deleteExternalResources(ctx context.Context, w *dis
 			klog.Error("unmarshal manifest error:", err)
 			return err
 		}
-		err = memberClient.Delete(ctx, &workload)
-		if err != nil {
-			if errors.IsNotFound(err) {
-				continue
+		retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			err = memberClient.Delete(context.Background(), &workload)
+			if err != nil {
+				if errors.IsNotFound(err) {
+					return nil
+				}
+				klog.Error("delete resource error:", err)
+				return err
 			}
-			klog.Error("delete resource error:", err)
-		}
-		klog.Info("资源删除成功")
+			klog.Info("资源删除成功")
+			return nil
+		})
 	}
 	return nil
 }
@@ -503,11 +513,10 @@ func (c *WorkloadController) syncWork(ctx context.Context, work *distributionv1.
 				klog.Error("get unstruct failed:", err)
 				return err
 			}
-
 			if !reflect.DeepEqual(temp.Object["spec"], unstruct.Object["spec"]) {
 				temp.Object["spec"] = unstruct.Object["spec"]
-				unstruct.SetResourceVersion(temp.GetResourceVersion())
-				err = memberClient.Update(ctx, unstruct)
+				//unstruct.SetResourceVersion(temp.GetResourceVersion())
+				err = memberClient.Update(ctx, temp)
 				if err != nil {
 					klog.Errorf("failed to update member resource", err)
 					return err
@@ -530,12 +539,12 @@ func (c *WorkloadController) OnAdd(obj interface{}) {
 func (c *WorkloadController) OnUpdate(oldObj, newObj interface{}) {
 	// TODO 如果workload的同步集群发生变化，需要将原来的集群中的资源删除，然后再向新的集群中同步资源
 	klog.Info("==>Workload OnUpdate")
+	c.removeResourceKey(oldObj)
 	c.storeResourceKey(newObj)
 	c.enqueue(newObj)
 }
 
 func (c *WorkloadController) OnDelete(obj interface{}) {
-	klog.Info("==>Workload OnDelete")
 	workoad, ok := obj.(*distributionv1.Workload)
 	if !ok {
 		klog.Error("workload convert failed")
@@ -550,32 +559,12 @@ func (c *WorkloadController) OnDelete(obj interface{}) {
 		klog.Error("failed to get namespace key: ", err)
 		return
 	}
-	manifests := workoad.Spec.WorkloadTemplate.Manifests
-	for _, manifest := range manifests {
-		unstruct := &unstructured.Unstructured{}
-		err := unstruct.UnmarshalJSON(manifest.Raw)
-		if err != nil {
-			klog.Error("failed to unmarshal manifest: ", err)
-			return
-		}
-		wideKey := keys.ClusterWideKey{
-			Group:     unstruct.GroupVersionKind().Group,
-			Version:   unstruct.GroupVersionKind().Version,
-			Kind:      unstruct.GroupVersionKind().Kind,
-			Namespace: unstruct.GetNamespace(),
-			Name:      unstruct.GetName(),
-		}
-		str := clusterName + "/" + WideKeyToString(wideKey)
-		c.Store.Delete(namespaceKey)
-		c.Store.Delete(str)
-	}
+	c.Store.RemoveResourceWorkloadRelation(namespaceKey)
 	c.enqueue(obj)
 }
 
 func (c *WorkloadController) storeResourceKey(obj interface{}) {
 
-	// TODO 当workload的spec发生了变化，那么Store中的键值对也需要发生变化
-	klog.Info("==> storeResourceKey")
 	workoad, ok := obj.(*distributionv1.Workload)
 	if !ok {
 		klog.Error("workload convert failed")
@@ -589,13 +578,6 @@ func (c *WorkloadController) storeResourceKey(obj interface{}) {
 	if err != nil {
 		klog.Error("failed to get namespace key: ", err)
 		return
-	}
-	rekey, ok := c.Store.Get(namespaceKey)
-	var resourceKeys map[string]struct{}
-	if !ok {
-		resourceKeys = make(map[string]struct{})
-	} else {
-		resourceKeys = rekey.(map[string]struct{})
 	}
 	manifests := workoad.Spec.WorkloadTemplate.Manifests
 	for _, manifest := range manifests {
@@ -614,10 +596,18 @@ func (c *WorkloadController) storeResourceKey(obj interface{}) {
 		}
 		str := clusterName + "/" + WideKeyToString(wideKey)
 		klog.Infof("存储资源%s--->%s", str, namespaceKey)
-		resourceKeys[str] = struct{}{}
-		c.Store.Set(namespaceKey, resourceKeys, kvcache.NoExpiration)
-		c.Store.Set(str, namespaceKey, kvcache.NoExpiration)
+		c.Store.StoreResourcePointToWorkload(str, namespaceKey)
+		c.Store.StoreWorkloadPointToResource(namespaceKey, str)
 	}
+}
+
+func (c WorkloadController) removeResourceKey(obj interface{}) {
+	namespaceKey, err := toolscache.MetaNamespaceKeyFunc(obj)
+	if err != nil {
+		klog.Error("failed to get namespace key: ", err)
+		return
+	}
+	c.Store.RemoveResourceWorkloadRelation(namespaceKey)
 }
 
 func (c *WorkloadController) getClusterKubeconfig(ctx context.Context, clusterName string) (string, error) {
