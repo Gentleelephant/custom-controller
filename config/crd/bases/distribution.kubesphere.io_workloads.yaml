@@ -53,14 +53,25 @@ spec:
           status:
             description: Status represents the status of PropagationStatus.
             properties:
-              manifests:
+              manifestStatuses:
                 description: ManifestStatuses contains running status of manifests
                   in spec.
                 items:
-                  description: Manifest represents a resource to be deployed on managed
-                    cluster.
+                  description: ManifestStatus contains running status of a specific
+                    manifest in spec.
+                  properties:
+                    message:
+                      type: string
+                    resource:
+                      description: Status reflects running status of current manifest.
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    status:
+                      type: string
+                    time:
+                      format: date-time
+                      type: string
                   type: object
-                  x-kubernetes-preserve-unknown-fields: true
                 type: array
             type: object
         required:

@@ -16,6 +16,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -116,20 +117,21 @@ func NewController(
 			if !ok {
 				return
 			}
-			go controller.discoverResources(ctx, 30*time.Second, cluster.Name)
-		},
-		UpdateFunc: func(old, new interface{}) {
-			if controller.isHostCluster(new) {
-				return
-			}
+			go controller.discoverResources(ctx, 60*time.Second, cluster.Name)
 		},
 		DeleteFunc: func(obj interface{}) {
 			if controller.isHostCluster(obj) {
 				return
 			}
+			cluster, ok := obj.(*v1alpha1.Cluster)
+			if !ok {
+				return
+			}
+			// 删除该member集群的informer
+			controller.InformerManager[cluster.Name].Stop()
+			delete(controller.InformerManager, cluster.Name)
 		},
 	})
-
 	return controller
 }
 
@@ -168,13 +170,13 @@ func (c *WorkloadController) discoverResources(ctx context.Context, period time.
 	wait.Until(func() {
 		newResources := GetDeletableResources(discoverClient)
 		for r := range newResources {
-			if memberInformer.IsHandlerExist(r, handleFunc) || c.gvrDisabled(r) {
+			if c.InformerManager[clustername].IsHandlerExist(r, handleFunc) || c.gvrDisabled(r) {
 				continue
 			}
 			klog.Infof("Setup informer for %s at cluster %s", r.String(), clustername)
-			memberInformer.ForResource(r, handleFunc)
+			c.InformerManager[clustername].ForResource(r, handleFunc)
 		}
-		memberInformer.Start()
+		c.InformerManager[clustername].Start()
 	}, period, c.stopCh)
 }
 
@@ -347,7 +349,7 @@ func (c *WorkloadController) syncHandler(ctx context.Context, key string) error 
 		// The Foo resource may no longer exist, in which case we stop
 		// processing.
 		if errors.IsNotFound(err) {
-			utilruntime.HandleError(fmt.Errorf("workload '%s' in work queue no longer exists", key))
+			//utilruntime.HandleError(fmt.Errorf("workload '%s' in work queue no longer exists", key))
 			return nil
 		}
 		return err
@@ -355,8 +357,7 @@ func (c *WorkloadController) syncHandler(ctx context.Context, key string) error 
 
 	if workload.ObjectMeta.DeletionTimestamp.IsZero() {
 		if !controllerutil.ContainsFinalizer(workload, Finalizer) {
-			workload.ObjectMeta.Finalizers = append(workload.ObjectMeta.Finalizers, Finalizer)
-			if err = c.updateExternalResources(context.Background(), workload); err != nil {
+			if err = c.updateExternalResources(context.Background(), namespace, name); err != nil {
 				logger.Error(err, "updateExternalResources error")
 				return err
 			}
@@ -375,18 +376,25 @@ func (c *WorkloadController) syncHandler(ctx context.Context, key string) error 
 			}
 			// remove our finalizer from the list and update it.
 			controllerutil.RemoveFinalizer(workload, Finalizer)
-			if err = c.Client.Update(ctx, workload); err != nil {
+			_, err = c.workloadclientset.DistributionV1().Workloads(namespace).Update(ctx, workload, metav1.UpdateOptions{})
+			if err != nil {
 				return err
 			}
 			return nil
 		}
 	}
 
-	err = c.syncWork(ctx, workload)
+	status, err := c.syncWork(ctx, workload)
 	if err != nil {
+		klog.Error("syncWork error:", err)
 		return err
 	}
 
+	err = c.updateStatus(ctx, namespace, name, status)
+	if err != nil {
+		klog.Error("updateStatus error:", err)
+		return err
+	}
 	// Finally, we update the status block of the Foo resource to reflect the
 	// current state of the world
 	//err = c.updateWorkloadStatus(foo, deployment)
@@ -394,7 +402,7 @@ func (c *WorkloadController) syncHandler(ctx context.Context, key string) error 
 	//	return err
 	//}
 
-	c.recorder.Event(workload, corev1.EventTypeNormal, SuccessSynced, "Workload Synced successfully")
+	//c.recorder.Event(workload, corev1.EventTypeNormal, SuccessSynced, "Workload Synced successfully")
 	return nil
 }
 
@@ -408,23 +416,34 @@ func (c *WorkloadController) enqueue(obj interface{}) {
 	c.Workqueue.Add(key)
 }
 
-func (c *WorkloadController) updateExternalResources(ctx context.Context, workload *distributionv1.Workload) error {
-	err := c.Client.Update(ctx, workload)
+func (c *WorkloadController) updateExternalResources(ctx context.Context, namespace, name string) error {
+	err := retry.RetryOnConflict(DefaultRetry, func() error {
+		workload, err := c.workloadclientset.DistributionV1().Workloads(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			klog.Error(err)
+			return err
+		}
+		workload.ObjectMeta.Finalizers = append(workload.ObjectMeta.Finalizers, Finalizer)
+		_, err = c.workloadclientset.DistributionV1().Workloads(namespace).Update(ctx, workload, metav1.UpdateOptions{})
+		return nil
+	})
 	if err != nil {
-		klog.Error(err)
 		return err
 	}
 	return nil
 }
 
 func (c *WorkloadController) deleteExternalResources(ctx context.Context, w *distributionv1.Workload) error {
-	klog.Info("开始删除member resources")
-	namespaceKey, err := toolscache.MetaNamespaceKeyFunc(w)
+	//namespaceKey, err := toolscache.MetaNamespaceKeyFunc(w)
+	//if err != nil {
+	//	klog.Error("-->get namespace key error:", err)
+	//	return err
+	//}
+	//c.Store.RemoveResourceWorkloadRelation(namespaceKey)
+	err := c.removeResourceKey(w)
 	if err != nil {
-		klog.Error("get namespace key error:", err)
 		return err
 	}
-	c.Store.RemoveResourceWorkloadRelation(namespaceKey)
 	memberClient, err := c.getClusterClient(ctx, w)
 	if err != nil {
 		klog.Error(err)
@@ -433,12 +452,12 @@ func (c *WorkloadController) deleteExternalResources(ctx context.Context, w *dis
 	workload := unstructured.Unstructured{}
 	manifests := w.Spec.WorkloadTemplate.Manifests
 	for _, manifest := range manifests {
-		err := workload.UnmarshalJSON(manifest.Raw)
+		err = workload.UnmarshalJSON(manifest.Raw)
 		if err != nil {
 			klog.Error("unmarshal manifest error:", err)
 			return err
 		}
-		retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		err = retry.RetryOnConflict(DefaultRetry, func() error {
 			err = memberClient.Delete(context.Background(), &workload)
 			if err != nil {
 				if errors.IsNotFound(err) {
@@ -447,9 +466,34 @@ func (c *WorkloadController) deleteExternalResources(ctx context.Context, w *dis
 				klog.Error("delete resource error:", err)
 				return err
 			}
-			klog.Info("资源删除成功")
 			return nil
 		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c WorkloadController) updateStatus(ctx context.Context, namespace, name string, status *distributionv1.WorkloadStatus) error {
+	err := retry.RetryOnConflict(DefaultRetry, func() error {
+		workload, err := c.workloadclientset.DistributionV1().Workloads(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			if errors.IsNotFound(err) {
+				return nil
+			}
+			return err
+		}
+		workload.Status.ManifestStatuses = status.ManifestStatuses
+		_, err = c.workloadclientset.DistributionV1().Workloads(namespace).UpdateStatus(ctx, workload, metav1.UpdateOptions{})
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		klog.Error("update status error:", err)
+		return err
 	}
 	return nil
 }
@@ -476,29 +520,31 @@ func (c *WorkloadController) getClusterClient(ctx context.Context, work *distrib
 	return ct, nil
 }
 
-func (c *WorkloadController) syncWork(ctx context.Context, work *distributionv1.Workload) error {
+func (c *WorkloadController) syncWork(ctx context.Context, work *distributionv1.Workload) (*distributionv1.WorkloadStatus, error) {
 
+	status := &distributionv1.WorkloadStatus{
+		ManifestStatuses: []distributionv1.ManifestStatus{},
+	}
 	// TODO:  1、对比status和spec中的manifests，如果有存在status中但是不存在于spec中的对象，删除该资源
 
 	// TODO：2、向member集群同步资源
 
 	// TODO：3、更新workload的status
-	klog.Info("syncWork..")
 
 	unstruct := &unstructured.Unstructured{}
 	manifests := work.Spec.WorkloadTemplate.Manifests
 	// 获取集群客户端
 	memberClient, err := c.getClusterClient(ctx, work)
 	if err != nil {
-		return err
+		return status, err
 	}
 	for _, manifest := range manifests {
-		//workloadStatus.ManifestStatuses = append(workloadStatus.ManifestStatuses, distributionv1.ManifestStatus{Status: &manifest.RawExtension})
-		err := unstruct.UnmarshalJSON(manifest.Raw)
+		var manifestStatus distributionv1.ManifestStatus
+		err = unstruct.UnmarshalJSON(manifest.Raw)
 		if err != nil {
 			klog.Errorf("Failed to unmarshal unstruct, error is: %v", err)
 		}
-		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		err = retry.RetryOnConflict(DefaultRetry, func() error {
 			temp := unstruct.DeepCopy()
 			err = memberClient.Get(ctx, client.ObjectKeyFromObject(temp), temp)
 			if err != nil {
@@ -515,7 +561,6 @@ func (c *WorkloadController) syncWork(ctx context.Context, work *distributionv1.
 			}
 			if !reflect.DeepEqual(temp.Object["spec"], unstruct.Object["spec"]) {
 				temp.Object["spec"] = unstruct.Object["spec"]
-				//unstruct.SetResourceVersion(temp.GetResourceVersion())
 				err = memberClient.Update(ctx, temp)
 				if err != nil {
 					klog.Errorf("failed to update member resource", err)
@@ -526,9 +571,26 @@ func (c *WorkloadController) syncWork(ctx context.Context, work *distributionv1.
 		})
 		if err != nil {
 			klog.Error("update member resource failed:", err)
+			manifestStatus = distributionv1.ManifestStatus{
+				Resource: &manifest.RawExtension,
+				Time:     metav1.Time{},
+				Status:   distributionv1.WorkFailed,
+				Message:  err.Error(),
+			}
+			status.ManifestStatuses = append(status.ManifestStatuses, manifestStatus)
 		}
+		manifestStatus = distributionv1.ManifestStatus{
+			Resource: &manifest.RawExtension,
+			Time: metav1.Time{
+				Time: time.Now(),
+			},
+			Status:  distributionv1.WorkSucceeded,
+			Message: "",
+		}
+		status.ManifestStatuses = append(status.ManifestStatuses, manifestStatus)
 	}
-	return nil
+
+	return status.DeepCopy(), nil
 }
 
 func (c *WorkloadController) OnAdd(obj interface{}) {
@@ -537,11 +599,79 @@ func (c *WorkloadController) OnAdd(obj interface{}) {
 }
 
 func (c *WorkloadController) OnUpdate(oldObj, newObj interface{}) {
-	// TODO 如果workload的同步集群发生变化，需要将原来的集群中的资源删除，然后再向新的集群中同步资源
-	klog.Info("==>Workload OnUpdate")
-	c.removeResourceKey(oldObj)
+	klog.Info("workload update")
+	err := c.removeResourceKey(oldObj)
+	if err != nil {
+		return
+	}
 	c.storeResourceKey(newObj)
+	toUnstructuredOld, err := utils.ToUnstructured(oldObj)
+	if err != nil {
+		klog.Error("to unstructured failed:", err)
+		return
+	}
+	toUnstructuredNew, err := utils.ToUnstructured(newObj)
+	if err != nil {
+		klog.Error("to unstructured failed:", err)
+		return
+	}
+	if !utils.SpecificationChanged(toUnstructuredOld, toUnstructuredNew) {
+		return
+	}
+	// 判断资源是否有增减，如果有减少，去要先将减少的资源删除
+	go c.removeUnusedResource(context.Background(), oldObj.(*distributionv1.Workload), newObj.(*distributionv1.Workload))
 	c.enqueue(newObj)
+}
+
+func (c *WorkloadController) removeUnusedResource(ctx context.Context, old, new *distributionv1.Workload) error {
+
+	m := make(map[distributionv1.ResourceSelector]unstructured.Unstructured)
+	for _, manifest := range new.Spec.WorkloadTemplate.Manifests {
+		var unstruct unstructured.Unstructured
+		err := unstruct.UnmarshalJSON(manifest.Raw)
+		if err != nil {
+			klog.Errorf("Failed to unmarshal unstruct, error is: %v", err)
+			return err
+		}
+		selector := distributionv1.ResourceSelector{
+			APIVersion: unstruct.GetAPIVersion(),
+			Kind:       unstruct.GroupVersionKind().Kind,
+			Namespace:  unstruct.GetNamespace(),
+			Name:       unstruct.GetName(),
+		}
+		m[selector] = unstruct
+	}
+	for _, manifest := range old.Spec.WorkloadTemplate.Manifests {
+		var unstruct unstructured.Unstructured
+		err := unstruct.UnmarshalJSON(manifest.Raw)
+		if err != nil {
+			klog.Errorf("Failed to unmarshal unstruct, error is: %v", err)
+		}
+		selector := distributionv1.ResourceSelector{
+			APIVersion: unstruct.GetAPIVersion(),
+			Kind:       unstruct.GroupVersionKind().Kind,
+			Namespace:  unstruct.GetNamespace(),
+			Name:       unstruct.GetName(),
+		}
+		_, ok := m[selector]
+		if !ok {
+			memberClient, err := c.getClusterClient(ctx, old)
+			if err != nil {
+				klog.Error("get cluster client failed:", err)
+				return err
+			}
+			err = memberClient.Delete(ctx, &unstruct)
+			if err != nil {
+				if errors.IsNotFound(err) {
+					continue
+				}
+				klog.Error("goroutine delete resource failed:", err)
+				return err
+			}
+			klog.Info("goroutine delete resource success")
+		}
+	}
+	return nil
 }
 
 func (c *WorkloadController) OnDelete(obj interface{}) {
@@ -595,19 +725,19 @@ func (c *WorkloadController) storeResourceKey(obj interface{}) {
 			Name:      unstruct.GetName(),
 		}
 		str := clusterName + "/" + WideKeyToString(wideKey)
-		klog.Infof("存储资源%s--->%s", str, namespaceKey)
 		c.Store.StoreResourcePointToWorkload(str, namespaceKey)
 		c.Store.StoreWorkloadPointToResource(namespaceKey, str)
 	}
 }
 
-func (c WorkloadController) removeResourceKey(obj interface{}) {
+func (c WorkloadController) removeResourceKey(obj interface{}) error {
 	namespaceKey, err := toolscache.MetaNamespaceKeyFunc(obj)
 	if err != nil {
 		klog.Error("failed to get namespace key: ", err)
-		return
+		return err
 	}
 	c.Store.RemoveResourceWorkloadRelation(namespaceKey)
+	return nil
 }
 
 func (c *WorkloadController) getClusterKubeconfig(ctx context.Context, clusterName string) (string, error) {

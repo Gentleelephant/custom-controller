@@ -1,0 +1,14 @@
+apiVersion: distribution.kubesphere.io/v1
+kind: ResourceDistribution
+metadata:
+  name: my-policy-test
+spec:
+  resourceSelectors:
+    apiVersion: "v1"
+    kind: Namespace
+    name: test
+  placement:
+    clusterAffinity:
+      clusterNames:
+        - member1
+        - member2

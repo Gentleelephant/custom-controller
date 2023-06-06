@@ -54,7 +54,7 @@ type Manifest struct {
 type WorkloadStatus struct {
 	// ManifestStatuses contains running status of manifests in spec.
 	// +optional
-	ManifestStatuses []Manifest `json:"manifests,omitempty"`
+	ManifestStatuses []ManifestStatus `json:"manifestStatuses,omitempty"`
 
 	// Identifier represents the identity of a resource linking to manifests in spec.
 	// +required
@@ -66,7 +66,13 @@ type ManifestStatus struct {
 	// Status reflects running status of current manifest.
 	// +kubebuilder:pruning:PreserveUnknownFields
 	// +optional
-	Status *runtime.RawExtension `json:"status,omitempty"`
+	Resource *runtime.RawExtension `json:"resource,omitempty"`
+
+	Time metav1.Time `json:"time,omitempty"`
+
+	Status string `json:"status,omitempty"`
+
+	Message string `json:"message,omitempty"`
 }
 
 // ResourceIdentifier provides the identifiers needed to interact with any arbitrary object.
@@ -114,6 +120,12 @@ const (
 	// WorkDegraded represents that the current state of Work does not match
 	// the desired state for a certain period.
 	WorkDegraded string = "Degraded"
+
+	WorkFailed string = "Failed"
+
+	WorkUnknown string = "Unknown"
+
+	WorkSucceeded string = "Succeeded"
 )
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

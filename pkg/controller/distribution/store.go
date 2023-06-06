@@ -11,7 +11,7 @@ type DistributionStore struct {
 	store *kvcache.Cache
 }
 
-// StoreResourcePointToDistribution apps/v1/namespace/deployments/nginx  -> policy1,policy2,policy3
+// StoreResourcePointToDistribution apps/v1/namespace/deployments/  -> policy1,policy2,policy3
 func (d DistributionStore) StoreResourcePointToDistribution(key, value string) {
 	m := make(map[string]struct{})
 	resul, exist := d.store.Get(key)
@@ -94,6 +94,17 @@ func (d DistributionStore) GetAllDistributions() []string {
 	for _, v := range d.store.Items() {
 		if s, ok := v.Object.(map[string]struct{}); ok {
 			result = append(result, maputil.Keys(s)...)
+		}
+	}
+	return slice.Unique(result)
+}
+
+// 返回所有的resource
+func (d DistributionStore) GetAllResources() []string {
+	var result []string
+	for _, v := range d.store.Items() {
+		if s, ok := v.Object.(string); ok {
+			result = append(result, s)
 		}
 	}
 	return slice.Unique(result)

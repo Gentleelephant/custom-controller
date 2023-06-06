@@ -74,6 +74,13 @@ const (
 	MessageResourceSynced = "ResourceDistribution synced successfully"
 )
 
+var DefaultRetry = wait.Backoff{
+	Steps:    10,
+	Duration: 30 * time.Millisecond,
+	Factor:   1.0,
+	Jitter:   0.1,
+}
+
 type overrideOption struct {
 	Op    string      `json:"op"`
 	Path  string      `json:"path"`
@@ -193,7 +200,7 @@ func (c *DistributionController) findRDbyCluster(ctx context.Context, obj interf
 						if err != nil {
 							return
 						}
-						c.enqueue(namespaceKey)
+						c.workqueue.Add(namespaceKey)
 						continue
 					}
 				}
@@ -205,7 +212,7 @@ func (c *DistributionController) findRDbyCluster(ctx context.Context, obj interf
 					if err != nil {
 						return
 					}
-					c.enqueue(namespaceKey)
+					c.workqueue.Add(namespaceKey)
 				}
 			}
 		}
@@ -347,7 +354,7 @@ func (c *DistributionController) syncHandler(ctx context.Context, key string) er
 		// The RD resource may no longer exist, in which case we stop
 		// processing.
 		if errors.IsNotFound(err) {
-			utilruntime.HandleError(fmt.Errorf("ResourceDistributions '%s' in work queue no longer exists", key))
+			//utilruntime.HandleError(fmt.Errorf("ResourceDistributions '%s' in work queue no longer exists", key))
 			return nil
 		}
 		return err
@@ -355,10 +362,9 @@ func (c *DistributionController) syncHandler(ctx context.Context, key string) er
 
 	if rd.ObjectMeta.DeletionTimestamp.IsZero() {
 		if !controllerutil.ContainsFinalizer(rd, Finalizer) {
-			rd.ObjectMeta.Finalizers = append(rd.ObjectMeta.Finalizers, Finalizer)
 			if err = c.updateExternalResources(context.Background(), rd); err != nil {
 				logger.Error(err, "updateExternalResources error")
-				return nil
+				return err
 			}
 		}
 	} else {
@@ -381,6 +387,7 @@ func (c *DistributionController) syncHandler(ctx context.Context, key string) er
 
 	err = c.applyWorkloads(ctx, rd)
 	if err != nil {
+		klog.Error("applyWorkloads error", err)
 		return err
 	}
 
@@ -391,7 +398,7 @@ func (c *DistributionController) syncHandler(ctx context.Context, key string) er
 	//	return err
 	//}
 
-	c.recorder.Event(rd, corev1.EventTypeNormal, SuccessSynced, MessageResourceSynced)
+	//c.recorder.Event(rd, corev1.EventTypeNormal, SuccessSynced, MessageResourceSynced)
 	return nil
 }
 
@@ -399,6 +406,7 @@ func (c *DistributionController) updateExternalResources(ctx context.Context, rd
 	if rd.Labels == nil {
 		rd.Labels = make(map[string]string)
 	}
+	rd.ObjectMeta.Finalizers = append(rd.ObjectMeta.Finalizers, Finalizer)
 	rd.Labels[ResourceDistributionPolicy] = rd.Name
 	_, err := c.clientset.DistributionV1().ResourceDistributions(rd.Namespace).Update(ctx, rd, metav1.UpdateOptions{})
 	if err != nil {
@@ -409,7 +417,6 @@ func (c *DistributionController) updateExternalResources(ctx context.Context, rd
 }
 
 func (c *DistributionController) deleteExternalResources(ctx context.Context, rd *v1.ResourceDistribution) error {
-	klog.Info("开始删除Workloads")
 	err := c.Client.DeleteAllOf(ctx, &v1.Workload{}, client.InNamespace(rd.Namespace), client.MatchingLabels{ResourceDistributionPolicy: rd.Name})
 	if err != nil {
 		klog.Error("delete workload error:", err)
@@ -419,7 +426,6 @@ func (c *DistributionController) deleteExternalResources(ctx context.Context, rd
 }
 
 func (c *DistributionController) applyWorkloads(ctx context.Context, policy *v1.ResourceDistribution) error {
-	klog.Info("创建Workloads")
 	works, err := c.generateWorks(ctx, policy)
 	if err != nil {
 		klog.Error(err)
@@ -427,28 +433,31 @@ func (c *DistributionController) applyWorkloads(ctx context.Context, policy *v1.
 	}
 	for _, work := range works {
 		var workObj v1.Workload
-		retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		err = retry.RetryOnConflict(DefaultRetry, func() error {
 			err = c.Client.Get(ctx, types.NamespacedName{Name: work.Name, Namespace: work.Namespace}, &workObj)
 			if err != nil {
 				if errors.IsNotFound(err) {
-					work.SetResourceVersion("")
 					err = c.Client.Create(ctx, &work)
 					if err != nil {
 						klog.Error(err)
 						return err
 					}
+					return nil
 				} else {
 					klog.Error(err)
 					return err
 				}
 			}
-			work.SetResourceVersion(workObj.GetResourceVersion())
-			err := c.Client.Update(ctx, &work)
+			workObj.Spec = work.Spec
+			err = c.Client.Update(ctx, &workObj)
 			if err != nil {
 				return err
 			}
 			return nil
 		})
+		if err != nil {
+			return err
+		}
 	}
 	return err
 }
@@ -831,13 +840,9 @@ func (c *DistributionController) EventFilter(obj interface{}) bool {
 
 	// 判断这个资源和RD是否对应
 	wideKeyToString := WideKeyToString(clusterWideKey)
-	resourceKeys := c.Store.GetDistributionsByResource(wideKeyToString)
-	for _, rkey := range resourceKeys {
-		// 进行前缀匹配
-		if strings.HasPrefix(wideKeyToString, rkey) {
-			klog.Info("前缀匹配成功")
-			return true
-		}
+	_, exist := c.findResourceDistributionByResourceKey(wideKeyToString)
+	if exist {
+		return true
 	}
 	return false
 }
@@ -849,15 +854,25 @@ func (c *DistributionController) notifyRD(obj interface{}) {
 		return
 	}
 	wideKeyToString := WideKeyToString(wideKey)
-	// 要进行前缀匹配
-	rds := c.Store.GetAllDistributions()
-	for _, rd := range rds {
-		// 进行前缀匹配
-		if strings.HasPrefix(wideKeyToString, rd) {
-			klog.Info("前缀匹配成功")
-			c.enqueue(rd)
+	distributionKey, exist := c.findResourceDistributionByResourceKey(wideKeyToString)
+	if !exist {
+		return
+	}
+	for _, s := range distributionKey {
+		c.workqueue.Add(s)
+	}
+}
+
+// findResourceDistributionKey find the resource distribution key.
+func (c DistributionController) findResourceDistributionByResourceKey(key string) ([]string, bool) {
+	res := c.Store.GetAllResources()
+	for _, re := range res {
+		if strings.HasPrefix(key, re) {
+			distributionsKey := c.Store.GetDistributionsByResource(re)
+			return distributionsKey, true
 		}
 	}
+	return nil, false
 }
 
 // OnAdd handles object add event and push the object to queue.
@@ -902,8 +917,13 @@ func (c *DistributionController) storeRelationships(obj interface{}) error {
 	if err != nil {
 		return err
 	}
-	c.Store.StoreResourcePointToDistribution(key, resourceDistribution.Name)
-	c.Store.StoreDistributionPointToResource(resourceDistribution.Name, key)
+	namespaceKey, err := NamespaceKeyFunc(resourceDistribution)
+	if err != nil {
+		klog.Error("NamespaceKeyFunc error:", err)
+		return err
+	}
+	c.Store.StoreResourcePointToDistribution(key, namespaceKey)
+	c.Store.StoreDistributionPointToResource(namespaceKey, key)
 	return nil
 }
 
@@ -926,8 +946,13 @@ func (c *DistributionController) removeRelationships(obj interface{}) error {
 	if err != nil {
 		return err
 	}
-	c.Store.RemoveDistributionByResource(key, resourceDistribution.Name)
-	c.Store.RemoveResourceByDistribution(resourceDistribution.Name)
+	namespaceKey, err := NamespaceKeyFunc(resourceDistribution)
+	if err != nil {
+		klog.Error("NamespaceKeyFunc error:", err)
+		return err
+	}
+	c.Store.RemoveDistributionByResource(key, namespaceKey)
+	c.Store.RemoveResourceByDistribution(namespaceKey)
 	return nil
 }
 
@@ -973,6 +998,7 @@ func (c DistributionController) removeUnusedWorkload(oldObj, newObj interface{})
 
 func (c *DistributionController) OnRDAdd(obj interface{}) {
 	// store resource and rd relation
+	klog.Info("=======>OnRDAdd")
 	err := c.storeRelationships(obj)
 	if err != nil {
 		klog.Error("storeRelationships error:", err)
@@ -1020,13 +1046,14 @@ func (c *DistributionController) OnRDDelete(obj interface{}) {
 		klog.Error(err)
 		return
 	}
-	rdNkey := types.NamespacedName{
-		Namespace: rd.Namespace,
-		Name:      rd.Name,
-	}.String()
+	namespaceKey, err := NamespaceKeyFunc(rd)
+	if err != nil {
+		klog.Error("NamespaceKeyFunc error:", err)
+		return
+	}
 	wideKeyToString := WideKeyToString(key)
-	c.Store.RemoveDistributionByResource(wideKeyToString, rdNkey)
-	c.Store.RemoveResourceByDistribution(rdNkey)
+	c.Store.RemoveDistributionByResource(wideKeyToString, namespaceKey)
+	c.Store.RemoveResourceByDistribution(namespaceKey)
 	c.enqueue(obj)
 }
 

@@ -1,6 +1,7 @@
 package distribution
 
 import (
+	"github.com/Gentleelephant/custom-controller/pkg/utils"
 	"github.com/Gentleelephant/custom-controller/pkg/utils/keys"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -29,23 +30,54 @@ func (c *ClusterEventHandler) OnAdd(obj interface{}) {
 }
 
 func (c *ClusterEventHandler) OnUpdate(oldObj, newObj interface{}) {
-	return
+
+	clusterResourceKey, err := c.GetClusterResourceKey(newObj)
+	if err != nil {
+		klog.Error("GetClusterResourceKey error:", err)
+		return
+	}
+
+	unstructuredOldObj, err := utils.ToUnstructured(oldObj)
+	if err != nil {
+		klog.Errorf("Failed to transform oldObj, error: %v", err)
+		return
+	}
+	unstructuredNewObj, err := utils.ToUnstructured(newObj)
+	if err != nil {
+		klog.Errorf("Failed to transform newObj, error: %v", err)
+		return
+	}
+
+	if !utils.SpecificationChanged(unstructuredOldObj, unstructuredNewObj) {
+		klog.V(4).Infof("Ignore update event of object (kind=%s, %s/%s) as specification no change", unstructuredOldObj.GetKind(), unstructuredOldObj.GetNamespace(), unstructuredOldObj.GetName())
+		return
+	}
+
+	workloadKey, ok := c.Controller.Store.GetWorkloadByResource(clusterResourceKey)
+	if !ok {
+		klog.Error("Get workload namespace/name from store error")
+		return
+	}
+
+	klog.Info("member cluster resource on update")
+
+	c.Controller.Workqueue.Add(workloadKey)
 }
 
 func (c *ClusterEventHandler) OnDelete(obj interface{}) {
+	klog.Info("member cluster resource on delete:")
 	// member集群上的资源删除，找到对应的workload，然后通知
 	clusterResourceKey, err := c.GetClusterResourceKey(obj)
 	if err != nil {
 		klog.Error("GetClusterResourceKey error:", err)
 		return
 	}
-	klog.Info("member集群上的资源删除:", clusterResourceKey)
-	workload, ok := c.Controller.Store.GetWorkloadByResource(clusterResourceKey)
+	workloadKey, ok := c.Controller.Store.GetWorkloadByResource(clusterResourceKey)
 	if !ok {
 		klog.Error("Get workload namespace/name from store error")
 		return
 	}
-	c.Controller.Workqueue.Add(workload)
+	c.Controller.Workqueue.Add(workloadKey)
 }
 
 func (c *ClusterEventHandler) EventFilter(obj interface{}) bool {
@@ -60,7 +92,6 @@ func (c *ClusterEventHandler) EventFilter(obj interface{}) bool {
 	//if _, ok := c.Controller.SkippedPropagatingNamespaces[clusterWideKey.Namespace]; ok {
 	//	return false
 	//}
-
 	if unstructObj, ok := obj.(*unstructured.Unstructured); ok {
 		switch unstructObj.GroupVersionKind() {
 		case corev1.SchemeGroupVersion.WithKind("Secret"):

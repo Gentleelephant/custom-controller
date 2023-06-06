@@ -1,7 +1,6 @@
 package distribution
 
 import (
-	"fmt"
 	"github.com/duke-git/lancet/v2/maputil"
 	kvcache "github.com/patrickmn/go-cache"
 )
@@ -67,7 +66,6 @@ func (d WorkloadStore) RemoveResourceWorkloadRelation(workloadname string) {
 	}
 	// 遍历map，删除value中的workloadname
 	for k := range m {
-		fmt.Println("workload store delete resource: ", k)
 		d.store.Delete(k)
 	}
 	// 将map也删除
