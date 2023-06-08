@@ -567,6 +567,20 @@ func (c *DistributionController) getClusterNameByLabelSelector(selector *metav1.
 
 func (c *DistributionController) getClusterName(ctx context.Context, pr *v1.ResourceDistribution) ([]string, error) {
 	var target []string
+
+	if pr.Spec.Placement == nil || pr.Spec.Placement.ClusterAffinity == nil {
+		// 如果没有指定placement，则使用所有的cluster
+		var clusterList v1alpha1.ClusterList
+		err := c.Client.List(ctx, &clusterList)
+		if err != nil {
+			return nil, err
+		}
+		for _, cluster := range clusterList.Items {
+			target = append(target, cluster.Name)
+		}
+		return target, nil
+	}
+
 	if pr.Spec.Placement.ClusterAffinity != nil {
 		for _, cluster := range pr.Spec.Placement.ClusterAffinity.ClusterNames {
 			target = append(target, cluster)

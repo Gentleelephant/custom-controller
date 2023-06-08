@@ -341,7 +341,11 @@ func (in ResourceDistributionMessage) DeepCopy() ResourceDistributionMessage {
 func (in *ResourceDistributionSpec) DeepCopyInto(out *ResourceDistributionSpec) {
 	*out = *in
 	out.ResourceSelectors = in.ResourceSelectors
-	in.Placement.DeepCopyInto(&out.Placement)
+	if in.Placement != nil {
+		in, out := &in.Placement, &out.Placement
+		*out = new(Placement)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.OverrideRules != nil {
 		in, out := &in.OverrideRules, &out.OverrideRules
 		*out = make([]RuleWithCluster, len(*in))

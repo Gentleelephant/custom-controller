@@ -11,7 +11,7 @@ type ResourceDistributionSpec struct {
 	ResourceSelectors ResourceSelector `json:"resourceSelectors"`
 
 	// +optional
-	Placement Placement `json:"placement,omitempty"`
+	Placement *Placement `json:"placement,omitempty"`
 
 	// +optional
 	OverrideRules []RuleWithCluster `json:"overrideRules,omitempty"`
