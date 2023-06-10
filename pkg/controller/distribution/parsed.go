@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/Gentleelephant/custom-controller/pkg/apis/cluster/v1alpha1"
 	v1 "github.com/Gentleelephant/custom-controller/pkg/apis/distribution/v1"
+	"github.com/Gentleelephant/custom-controller/pkg/constant"
 	"github.com/Gentleelephant/custom-controller/pkg/utils"
 	"github.com/duke-git/lancet/v2/cryptor"
 	set "github.com/duke-git/lancet/v2/datastructure/set"
@@ -129,10 +130,10 @@ func ParseResourceDistribution(ctx context.Context, client ctrlclient.Client, rd
 		parseRule := ParsedOverrideRules{
 			Clusters:             intersection,
 			OverrideOptions:      overrideOptions,
-			RuleName:             item.RuleName,
+			RuleName:             item.Id,
 			ResourceDistribution: rd,
 		}
-		m[item.RuleName] = parseRule
+		m[item.Id] = parseRule
 		usedCluster = append(usedCluster, intersection...)
 	}
 	// 将useCluster去重，再和clusterPlacement比较，如果存在不同的，说明还有需要同步的不用override的集群
@@ -225,7 +226,7 @@ func ApplyOverrideRules(object interface{}, rule ParsedOverrideRules) (*unstruct
 	}
 
 	unObj.SetAnnotations(map[string]string{
-		SyncCluster: strings.Join(rule.Clusters, ","),
+		constant.SyncCluster: strings.Join(rule.Clusters, ","),
 	})
 
 	return unObj, nil

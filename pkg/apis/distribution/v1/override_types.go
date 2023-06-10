@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"github.com/duke-git/lancet/v2/random"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 
@@ -41,7 +42,7 @@ const (
 
 // RuleWithCluster defines the override rules on clusters.
 type RuleWithCluster struct {
-	RuleName string `json:"ruleName,omitempty"`
+	Id string `json:"id,omitempty"`
 	// TargetCluster defines restrictions on this override policy
 	// that only applies to resources propagated to the matching clusters.
 	// nil means matching all clusters.
@@ -49,6 +50,15 @@ type RuleWithCluster struct {
 
 	// Overriders represents the override rules that would apply on resources
 	Overriders Overriders `json:"overriders"`
+}
+
+func ApplyRuleName(rules []RuleWithCluster) []RuleWithCluster {
+	for i := range rules {
+		if rules[i].Id == "" {
+			rules[i].Id = random.RandLower(8)
+		}
+	}
+	return rules
 }
 
 // Overriders offers various alternatives to represent the override rules.

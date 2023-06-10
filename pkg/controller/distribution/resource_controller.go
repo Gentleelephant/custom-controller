@@ -2,28 +2,26 @@ package distribution
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"github.com/Gentleelephant/custom-controller/pkg/apis/cluster/v1alpha1"
 	v1 "github.com/Gentleelephant/custom-controller/pkg/apis/distribution/v1"
 	clientset "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned"
 	clusterinformers "github.com/Gentleelephant/custom-controller/pkg/client/informers/externalversions/cluster/v1alpha1"
 	distributioninformers "github.com/Gentleelephant/custom-controller/pkg/client/informers/externalversions/distribution/v1"
+	clisters "github.com/Gentleelephant/custom-controller/pkg/client/listers/cluster/v1alpha1"
 	listers "github.com/Gentleelephant/custom-controller/pkg/client/listers/distribution/v1"
+	"github.com/Gentleelephant/custom-controller/pkg/constant"
 	"github.com/Gentleelephant/custom-controller/pkg/utils"
 	"github.com/Gentleelephant/custom-controller/pkg/utils/genericmanager"
 	"github.com/Gentleelephant/custom-controller/pkg/utils/keys"
 	"github.com/duke-git/lancet/v2/maputil"
 	"github.com/duke-git/lancet/v2/slice"
-	jsonpatch "github.com/evanphx/json-patch"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/discovery"
@@ -42,33 +40,9 @@ import (
 )
 
 const (
-	ResourceDistributionPolicy = "distribution.kubesphere.io/policy"
-
-	SyncCluster = "distribution.kubesphere.io/cluster"
-
-	ResourceDistributionId = "distribution.kubesphere.io/id"
-
-	ControllerName = "distribution-controller"
-
-	Finalizer = "distribution.kubesphere.io/finalizer"
-
-	ResourceDistributionAnnotation = "distribution.kubesphere.io/rd"
-
-	WorkloadCLusterAnnotation = "distribution.kubesphere.io/workload-cluster"
-
 	ChannelSize = 256
 
-	// SuccessSynced is used as part of the Event 'reason' when a Foo is synced
-	SuccessSynced = "Synced"
-	// ErrResourceExists is used as part of the Event 'reason' when a Foo fails
-	// to sync due to a Deployment of the same name already existing.
-	ErrResourceExists = "ErrResourceExists"
-	// MessageResourceExists is the message used for Events when a resource
-	// fails to sync due to a Deployment already existing
-	MessageResourceExists = "Resource %q already exists and is not managed by Foo"
-	// MessageResourceSynced is the message used for an Event fired when a Foo
-	// is synced successfully
-	MessageResourceSynced = "ResourceDistribution synced successfully"
+	ControllerName = "distribution-controller"
 
 	EventCreate = "ADD"
 
@@ -78,13 +52,6 @@ const (
 )
 
 type EventType string
-
-var DefaultRetry = wait.Backoff{
-	Steps:    10,
-	Duration: 30 * time.Millisecond,
-	Factor:   1.0,
-	Jitter:   0.1,
-}
 
 type EventObject struct {
 	EventType EventType
@@ -104,12 +71,14 @@ type DistributionController struct {
 	kubeclientset    kubernetes.Interface
 	clientset        clientset.Interface
 	rdLister         listers.ResourceDistributionLister
+	clusterLister    clisters.ClusterLister
 	scheme           *runtime.Scheme
 	restMapper       meta.RESTMapper
 	dynamicClient    dynamic.Interface
 	discoverClient   discovery.DiscoveryClient
 	Store            *KeyStore
 	rdSynced         toolscache.InformerSynced
+	clusterSynced    toolscache.InformerSynced
 	workqueue        workqueue.RateLimitingInterface
 	recorder         record.EventRecorder
 	informersManager *genericmanager.InformerManager
@@ -136,7 +105,7 @@ func NewDistributionController(ctx context.Context,
 	eventBroadcaster := record.NewBroadcaster()
 	eventBroadcaster.StartStructuredLogging(0)
 	eventBroadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{Interface: kubeclientset.CoreV1().Events("")})
-	recorder := eventBroadcaster.NewRecorder(schema, corev1.EventSource{Component: ControllerName})
+	_ = eventBroadcaster.NewRecorder(schema, corev1.EventSource{Component: ControllerName})
 
 	controller := &DistributionController{
 		Client:         client,
@@ -148,8 +117,10 @@ func NewDistributionController(ctx context.Context,
 		discoverClient: discoverClient,
 		rdLister:       rdinformer.Lister(),
 		rdSynced:       rdinformer.Informer().HasSynced,
+		clusterLister:  cinformer.Lister(),
+		clusterSynced:  cinformer.Informer().HasSynced,
 		workqueue:      workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "distribution"),
-		recorder:       recorder,
+		//recorder:       recorder,
 	}
 
 	controller.Store = NewKeyStore()
@@ -203,33 +174,6 @@ func (c *DistributionController) enqueue(obj interface{}) {
 	c.workqueue.Add(obj)
 }
 
-// 开启多个goroutinue去创建workload
-func (c *DistributionController) TestChannel() {
-
-}
-
-func createW(bo chan BindObject) {
-
-	for {
-		select {
-		case obj := <-bo:
-			klog.Info("接收到对象开始创建workload", obj.RdWidekey)
-		}
-	}
-
-}
-
-func deleteW(names chan string) {
-
-	for {
-		select {
-		case name := <-names:
-			klog.Info("开始删除workload", name)
-		}
-	}
-
-}
-
 func (c *DistributionController) Start(ctx context.Context) error {
 	err := c.Run(ctx, 4)
 	if err != nil {
@@ -249,6 +193,9 @@ func (c *DistributionController) Run(ctx context.Context, workers int) error {
 	// Wait for the caches to be synced before starting workers
 	logger.Info("Waiting for informer caches to sync")
 	if ok := toolscache.WaitForCacheSync(ctx.Done(), c.rdSynced); !ok {
+		return fmt.Errorf("failed to wait for caches to sync")
+	}
+	if ok := toolscache.WaitForCacheSync(ctx.Done(), c.clusterSynced); !ok {
 		return fmt.Errorf("failed to wait for caches to sync")
 	}
 
@@ -602,7 +549,7 @@ func (c *DistributionController) updateExternalResources(ctx context.Context, rd
 	if rd.Labels == nil {
 		rd.Labels = make(map[string]string)
 	}
-	rd.ObjectMeta.Finalizers = append(rd.ObjectMeta.Finalizers, Finalizer)
+	rd.ObjectMeta.Finalizers = append(rd.ObjectMeta.Finalizers, constant.Finalizer)
 	_, err := c.clientset.DistributionV1().ResourceDistributions(rd.Namespace).Update(ctx, rd, metav1.UpdateOptions{})
 	if err != nil {
 		klog.Error(err)
@@ -612,7 +559,7 @@ func (c *DistributionController) updateExternalResources(ctx context.Context, rd
 }
 
 func (c *DistributionController) deleteExternalResources(ctx context.Context, rd *v1.ResourceDistribution) error {
-	err := c.Client.DeleteAllOf(ctx, &v1.Workload{}, client.InNamespace(rd.Namespace), client.MatchingLabels{ResourceDistributionPolicy: rd.Name})
+	err := c.Client.DeleteAllOf(ctx, &v1.Workload{}, client.InNamespace(rd.Namespace), client.MatchingLabels{constant.ResourceDistributionPolicy: rd.Name})
 	if err != nil {
 		klog.Error("delete workload error:", err)
 		return err
@@ -673,49 +620,12 @@ func (c *DistributionController) getClusterName(ctx context.Context, pr *v1.Reso
 	return target, nil
 }
 
-func applyJSONPatchs(obj *unstructured.Unstructured, overrides []overrideOption) error {
-	jsonPatchBytes, err := json.Marshal(overrides)
-	if err != nil {
-		return err
-	}
-	patch, err := jsonpatch.DecodePatch(jsonPatchBytes)
-	if err != nil {
-		return err
-	}
-	objectJSONBytes, err := obj.MarshalJSON()
-	if err != nil {
-		return err
-	}
-	patchedObjectJSONBytes, err := patch.Apply(objectJSONBytes)
-	if err != nil {
-		return err
-	}
-	err = obj.UnmarshalJSON(patchedObjectJSONBytes)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
 func getGroupVersionResource(restMapper meta.RESTMapper, gvk schema.GroupVersionKind) (schema.GroupVersionResource, error) {
 	restMapping, err := restMapper.RESTMapping(gvk.GroupKind(), gvk.Version)
 	if err != nil {
 		return schema.GroupVersionResource{}, err
 	}
 	return restMapping.Resource, nil
-}
-
-func getOverrideOption(overrideRules *v1.RuleWithCluster) []overrideOption {
-	plaintext := overrideRules.Overriders.Plaintext
-	var overrideOptions []overrideOption
-	for i := range plaintext {
-		var temp overrideOption
-		temp.Path = plaintext[i].Path
-		temp.Value = plaintext[i].Value
-		temp.Op = string(plaintext[i].Operator)
-		overrideOptions = append(overrideOptions, temp)
-	}
-	return overrideOptions
 }
 
 //func (c *DistributionController) createWorkV2(clusterNames []string, rd *v1.ResourceDistribution) map[string]v1.Workload {
@@ -907,45 +817,45 @@ func (c *DistributionController) removeRelationships(obj interface{}) error {
 	return nil
 }
 
-func (c *DistributionController) removeUnusedWorkload(oldObj, newObj interface{}) {
-	oldRd, ok := oldObj.(*v1.ResourceDistribution)
-	if !ok {
-		klog.Error("oldObj is not ResourceDistribution")
-	}
-	newRd, ok := newObj.(*v1.ResourceDistribution)
-	if !ok {
-		klog.Error("newObj is not ResourceDistribution")
-	}
-	oldClusters, err := c.getClusterName(context.Background(), oldRd)
-	if err != nil {
-		return
-	}
-	newClusters, err := c.getClusterName(context.Background(), newRd)
-	if err != nil {
-		return
-	}
-	// 进行差集比较,然后删除workload
-	difference := slice.Difference(oldClusters, newClusters)
-	if len(difference) > 0 {
-		for _, _ = range difference {
-			var wl v1.Workload
-			err = c.Client.Get(context.Background(), types.NamespacedName{
-				Namespace: oldRd.Namespace,
-				Name:      "",
-			}, &wl)
-			if err != nil {
-				if errors.IsNotFound(err) {
-					continue
-				}
-				klog.Error(err)
-			}
-			err = c.Client.Delete(context.Background(), &wl)
-			if err != nil {
-				klog.Error(err)
-			}
-		}
-	}
-}
+//func (c *DistributionController) removeUnusedWorkload(oldObj, newObj interface{}) {
+//	oldRd, ok := oldObj.(*v1.ResourceDistribution)
+//	if !ok {
+//		klog.Error("oldObj is not ResourceDistribution")
+//	}
+//	newRd, ok := newObj.(*v1.ResourceDistribution)
+//	if !ok {
+//		klog.Error("newObj is not ResourceDistribution")
+//	}
+//	oldClusters, err := c.getClusterName(context.Background(), oldRd)
+//	if err != nil {
+//		return
+//	}
+//	newClusters, err := c.getClusterName(context.Background(), newRd)
+//	if err != nil {
+//		return
+//	}
+//	// 进行差集比较,然后删除workload
+//	difference := slice.Difference(oldClusters, newClusters)
+//	if len(difference) > 0 {
+//		for _, _ = range difference {
+//			var wl v1.Workload
+//			err = c.Client.Get(context.Background(), types.NamespacedName{
+//				Namespace: oldRd.Namespace,
+//				Name:      "",
+//			}, &wl)
+//			if err != nil {
+//				if errors.IsNotFound(err) {
+//					continue
+//				}
+//				klog.Error(err)
+//			}
+//			err = c.Client.Delete(context.Background(), &wl)
+//			if err != nil {
+//				klog.Error(err)
+//			}
+//		}
+//	}
+//}
 
 func (c *DistributionController) OnRDAdd(obj interface{}) {
 

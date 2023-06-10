@@ -40,6 +40,8 @@ spec:
                 items:
                   description: RuleWithCluster defines the override rules on clusters.
                   properties:
+                    id:
+                      type: string
                     overriders:
                       description: Overriders represents the override rules that would
                         apply on resources
@@ -74,8 +76,6 @@ spec:
                             type: object
                           type: array
                       type: object
-                    ruleName:
-                      type: string
                     targetCluster:
                       description: TargetCluster defines restrictions on this override
                         policy that only applies to resources propagated to the matching

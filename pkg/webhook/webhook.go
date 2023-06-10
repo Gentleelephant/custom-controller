@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	v1 "github.com/Gentleelephant/custom-controller/pkg/apis/distribution/v1"
+	"github.com/Gentleelephant/custom-controller/pkg/constant"
 	"github.com/duke-git/lancet/v2/random"
 	"k8s.io/klog/v2"
 	"net/http"
@@ -27,12 +28,18 @@ func (a *ResourceDistributionWebhook) Handle(ctx context.Context, req admission.
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
-	if err != nil {
-		for i, _ := range rd.Spec.OverrideRules {
-			if rd.Spec.OverrideRules[i].RuleName == "" {
-				rd.Spec.OverrideRules[i].RuleName = random.RandString(8)
-			}
-		}
+	// 生成rule id
+	applyRules := v1.ApplyRuleName(rd.Spec.OverrideRules)
+	rd.Spec.OverrideRules = applyRules
+
+	annotations := rd.ObjectMeta.Annotations
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	_, ok := annotations[constant.ResourceDistributionId]
+	if !ok {
+		annotations = make(map[string]string)
+		annotations[constant.ResourceDistributionId] = random.RandLower(8)
 	}
 
 	marshaledRd, err := json.Marshal(rd)
@@ -40,12 +47,7 @@ func (a *ResourceDistributionWebhook) Handle(ctx context.Context, req admission.
 		return admission.Errored(http.StatusInternalServerError, err)
 	}
 
-	klog.Infof("Mutated ResourceDistribution: %v", rd)
-
-	response := admission.PatchResponseFromRaw(req.Object.Raw, marshaledRd)
-
-	return response
-
+	return admission.PatchResponseFromRaw(req.Object.Raw, marshaledRd)
 }
 
 func (a *ResourceDistributionWebhook) InjectDecoder(d *admission.Decoder) error {
