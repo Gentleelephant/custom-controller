@@ -35,10 +35,8 @@ spec:
         #   type: RuntimeDefault
       containers:
       - command:
-#          -
-#        args:
-#        - --leader-elect
-        image: birdhk/synccontroller:latest
+        - /manager
+        image: birdhk/resource-distribution-controller:latest
         name: manager
         securityContext:
           allowPrivilegeEscalation: false

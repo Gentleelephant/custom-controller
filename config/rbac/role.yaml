@@ -7,9 +7,9 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
-  - apps
+  - distribution.kubesphere.io
   resources:
-  - deployments
+  - resourcedistributions
   verbs:
   - create
   - delete
@@ -19,36 +19,15 @@ rules:
   - update
   - watch
 - apiGroups:
-  - ""
+  - distribution.kubesphere.io
   resources:
-  - pods
-  verbs:
-  - get
-- apiGroups:
-  - policy.kubesphere.io
-  resources:
-  - propagationpolicies
-  - resourcebindings
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - policy.kubesphere.io
-  resources:
-  - propagationpolicies/finalizers
-  - resourcebindings/finalizers
+  - resourcedistributions/finalizers
   verbs:
   - update
 - apiGroups:
-  - policy.kubesphere.io
+  - distribution.kubesphere.io
   resources:
-  - propagationpolicies/status
-  - resourcebindings/status
+  - resourcedistributions/status
   verbs:
   - get
   - patch

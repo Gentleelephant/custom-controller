@@ -2,6 +2,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: birdhk-nginx-deployment-test
+  labels:
+    app: nginxtest-test
 spec:
   selector:
     matchLabels:

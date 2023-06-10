@@ -35,20 +35,11 @@ spec:
           spec:
             description: Spec represents the desired behavior of Work.
             properties:
-              workloadTemplate:
-                description: Workload represents the manifest workload to be deployed
-                  on managed cluster.
-                properties:
-                  manifests:
-                    description: Manifests represents a list of Kubernetes resources
-                      to be deployed on the managed cluster.
-                    items:
-                      description: Manifest represents a resource to be deployed on
-                        managed cluster.
-                      type: object
-                      x-kubernetes-preserve-unknown-fields: true
-                    type: array
+              manifests:
+                description: Manifest represents a resource to be deployed on managed
+                  cluster.
                 type: object
+                x-kubernetes-preserve-unknown-fields: true
             type: object
           status:
             description: Status represents the status of PropagationStatus.
@@ -56,23 +47,19 @@ spec:
               manifestStatuses:
                 description: ManifestStatuses contains running status of manifests
                   in spec.
-                items:
-                  description: ManifestStatus contains running status of a specific
-                    manifest in spec.
-                  properties:
-                    message:
-                      type: string
-                    resource:
-                      description: Status reflects running status of current manifest.
-                      type: object
-                      x-kubernetes-preserve-unknown-fields: true
-                    status:
-                      type: string
-                    time:
-                      format: date-time
-                      type: string
-                  type: object
-                type: array
+                properties:
+                  message:
+                    type: string
+                  resource:
+                    description: Status reflects running status of current manifest.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  status:
+                    type: string
+                  time:
+                    format: date-time
+                    type: string
+                type: object
             type: object
         required:
         - spec

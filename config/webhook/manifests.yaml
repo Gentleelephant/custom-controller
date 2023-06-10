@@ -1,0 +1,28 @@
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  creationTimestamp: null
+  name: mutating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /mutate-v1-rd
+  failurePolicy: Fail
+  name: mdistribution.kb.io
+  rules:
+  - apiGroups:
+    - distribution.kubesphere.io
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - resourcedistributions
+  sideEffects: None

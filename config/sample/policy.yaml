@@ -3,7 +3,7 @@ kind: ResourceDistribution
 metadata:
   name: my-policy-test
 spec:
-  resourceSelectors:
+  resourceSelector:
     apiVersion: apps/v1
     kind: Deployment
 #    name: nginx-deployment
@@ -22,6 +22,7 @@ spec:
         - path: /spec/replicas
           operator: replace
           value: 2
+      ruleName: rule1
     - targetCluster:
         clusterNames:
           - member2
@@ -30,3 +31,4 @@ spec:
           - path: /spec/replicas
             operator: replace
             value: 3
+      ruleName: rule2
