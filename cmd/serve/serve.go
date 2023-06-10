@@ -42,9 +42,9 @@ func Start() {
 
 	mgr, err := ctrl.NewManager(cfg, manager.Options{
 		Scheme:                 scheme,
-		Port:                   9096,
-		MetricsBindAddress:     "0",
-		HealthProbeBindAddress: "0",
+		Port:                   9443,
+		MetricsBindAddress:     ":8080",
+		HealthProbeBindAddress: ":8081",
 	})
 	if err != nil {
 		log.Fatalln(err, "==>unable to create manager")

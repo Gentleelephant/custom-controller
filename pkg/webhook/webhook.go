@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	v1 "github.com/Gentleelephant/custom-controller/pkg/apis/distribution/v1"
+	"github.com/duke-git/lancet/v2/random"
 	"k8s.io/klog/v2"
 	"net/http"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -26,14 +27,24 @@ func (a *ResourceDistributionWebhook) Handle(ctx context.Context, req admission.
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
-	// mutate the fields in pod
+	if err != nil {
+		for i, _ := range rd.Spec.OverrideRules {
+			if rd.Spec.OverrideRules[i].RuleName == "" {
+				rd.Spec.OverrideRules[i].RuleName = random.RandString(8)
+			}
+		}
+	}
 
 	marshaledRd, err := json.Marshal(rd)
 	if err != nil {
 		return admission.Errored(http.StatusInternalServerError, err)
 	}
-	klog.Info("Handle webhook request success")
-	return admission.PatchResponseFromRaw(req.Object.Raw, marshaledRd)
+
+	klog.Infof("Mutated ResourceDistribution: %v", rd)
+
+	response := admission.PatchResponseFromRaw(req.Object.Raw, marshaledRd)
+
+	return response
 
 }
 

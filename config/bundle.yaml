@@ -17,6 +17,15 @@ metadata:
   name: custome-controller-manager-role
 rules:
 - apiGroups:
+  - '*'
+  resources:
+  - '*'
+  verbs:
+  - get
+  - list
+  - update
+  - watch
+- apiGroups:
   - distribution.kubesphere.io
   resources:
   - resourcedistributions

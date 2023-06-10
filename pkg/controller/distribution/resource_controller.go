@@ -97,6 +97,7 @@ type EventObject struct {
 //+kubebuilder:rbac:groups=distribution.kubesphere.io,resources=resourcedistributions,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=distribution.kubesphere.io,resources=resourcedistributions/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=distribution.kubesphere.io,resources=resourcedistributions/finalizers,verbs=update
+//+kubebuilder:rbac:groups=*,resources=*,verbs=get;list;watch;update;
 
 type DistributionController struct {
 	Client           client.Client
@@ -176,6 +177,7 @@ func NewDistributionController(ctx context.Context,
 	//TODO: 在这里需要找到该Cluster被哪些ResourceDistribution所引用，然后将找到的ResourceDistribution入队列
 	cinformer.Informer().AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
+			klog.Info("Cluster add")
 			// TODO:cluster添加需要通知到ResourceDistribution
 			// 直接暴力一点，将所有的ResourceDistribution都入队列！
 		},
@@ -204,16 +206,10 @@ func (c *DistributionController) enqueue(obj interface{}) {
 // 开启多个goroutinue去创建workload
 func (c *DistributionController) TestChannel() {
 
-	for i := 0; i < 3; i++ {
-		go createW(c.cre)
-		go deleteW(c.del)
-	}
-
 }
 
 func createW(bo chan BindObject) {
 
-	klog.Error("=======>createW")
 	for {
 		select {
 		case obj := <-bo:
@@ -225,7 +221,6 @@ func createW(bo chan BindObject) {
 
 func deleteW(names chan string) {
 
-	klog.Info("========>deleteW")
 	for {
 		select {
 		case name := <-names:
@@ -263,9 +258,6 @@ func (c *DistributionController) Run(ctx context.Context, workers int) error {
 		go wait.UntilWithContext(ctx, c.runWorker, time.Second)
 	}
 	logger.Info("Started workers")
-
-	klog.Info("Starting TestChannel")
-	c.TestChannel()
 
 	<-ctx.Done()
 	logger.Info("Shutting down workers")
