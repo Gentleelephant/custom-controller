@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/Gentleelephant/custom-controller/pkg/apis/cluster/v1alpha1"
-	"github.com/Gentleelephant/custom-controller/pkg/apis/distribution"
 	v1 "github.com/Gentleelephant/custom-controller/pkg/apis/distribution/v1"
 	clientset "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned"
 	clusterinformers "github.com/Gentleelephant/custom-controller/pkg/client/informers/externalversions/cluster/v1alpha1"
@@ -14,7 +13,6 @@ import (
 	"github.com/Gentleelephant/custom-controller/pkg/utils"
 	"github.com/Gentleelephant/custom-controller/pkg/utils/genericmanager"
 	"github.com/Gentleelephant/custom-controller/pkg/utils/keys"
-	set "github.com/duke-git/lancet/v2/datastructure/set"
 	"github.com/duke-git/lancet/v2/maputil"
 	"github.com/duke-git/lancet/v2/slice"
 	jsonpatch "github.com/evanphx/json-patch"
@@ -34,13 +32,12 @@ import (
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	toolscache "k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/client-go/util/retry"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
-	//"sigs.k8s.io/controller-runtime/pkg/cache"
+	"reflect"
+	"sync"
+
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"strings"
 	"time"
 )
 
@@ -53,13 +50,13 @@ const (
 
 	ControllerName = "distribution-controller"
 
-	KubernetesReservedNSPrefix = "kube-"
-
 	Finalizer = "distribution.kubesphere.io/finalizer"
 
 	ResourceDistributionAnnotation = "distribution.kubesphere.io/rd"
 
 	WorkloadCLusterAnnotation = "distribution.kubesphere.io/workload-cluster"
+
+	ChannelSize = 256
 
 	// SuccessSynced is used as part of the Event 'reason' when a Foo is synced
 	SuccessSynced = "Synced"
@@ -72,7 +69,15 @@ const (
 	// MessageResourceSynced is the message used for an Event fired when a Foo
 	// is synced successfully
 	MessageResourceSynced = "ResourceDistribution synced successfully"
+
+	EventCreate = "ADD"
+
+	EventUpdate = "UPDATE"
+
+	EventDelete = "DELETE"
 )
+
+type EventType string
 
 var DefaultRetry = wait.Backoff{
 	Steps:    10,
@@ -81,29 +86,37 @@ var DefaultRetry = wait.Backoff{
 	Jitter:   0.1,
 }
 
-type overrideOption struct {
-	Op    string      `json:"op"`
-	Path  string      `json:"path"`
-	Value interface{} `json:"value,omitempty"`
+type EventObject struct {
+	EventType EventType
+
+	Old *v1.ResourceDistribution
+
+	New *v1.ResourceDistribution
 }
 
+//+kubebuilder:rbac:groups=distribution.kubesphere.io,resources=resourcedistributions,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=distribution.kubesphere.io,resources=resourcedistributions/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=distribution.kubesphere.io,resources=resourcedistributions/finalizers,verbs=update
+
 type DistributionController struct {
-	Client                client.Client
-	kubeclientset         kubernetes.Interface
-	clientset             clientset.Interface
-	rdLister              listers.ResourceDistributionLister
-	scheme                *runtime.Scheme
-	restMapper            meta.RESTMapper
-	dynamicClient         dynamic.Interface
-	discoverClient        discovery.DiscoveryClient
-	Store                 DistributionStore
-	rdSynced              toolscache.InformerSynced
-	workqueue             workqueue.RateLimitingInterface
-	recorder              record.EventRecorder
-	EventHandler          toolscache.ResourceEventHandler
-	InformerManager       genericmanager.SingleClusterInformerManager
-	SkippedResourceConfig *utils.SkippedResourceConfig
-	stopCh                <-chan struct{}
+	Client           client.Client
+	kubeclientset    kubernetes.Interface
+	clientset        clientset.Interface
+	rdLister         listers.ResourceDistributionLister
+	scheme           *runtime.Scheme
+	restMapper       meta.RESTMapper
+	dynamicClient    dynamic.Interface
+	discoverClient   discovery.DiscoveryClient
+	Store            *KeyStore
+	rdSynced         toolscache.InformerSynced
+	workqueue        workqueue.RateLimitingInterface
+	recorder         record.EventRecorder
+	informersManager *genericmanager.InformerManager
+	RuleStore        *ParsedOverrideRulesStore
+	del              chan string
+	cre              chan BindObject
+	stopCh           <-chan struct{}
+	mu               sync.RWMutex
 }
 
 func NewDistributionController(ctx context.Context,
@@ -116,7 +129,6 @@ func NewDistributionController(ctx context.Context,
 	discoverClient discovery.DiscoveryClient,
 	rdinformer distributioninformers.ResourceDistributionInformer,
 	cinformer clusterinformers.ClusterInformer,
-	informerManager genericmanager.SingleClusterInformerManager,
 ) *DistributionController {
 	logger := klog.FromContext(ctx)
 
@@ -126,27 +138,30 @@ func NewDistributionController(ctx context.Context,
 	recorder := eventBroadcaster.NewRecorder(schema, corev1.EventSource{Component: ControllerName})
 
 	controller := &DistributionController{
-		Client:                client,
-		kubeclientset:         kubeclientset,
-		clientset:             clientset,
-		scheme:                schema,
-		restMapper:            restmapper,
-		dynamicClient:         dynamicClient,
-		discoverClient:        discoverClient,
-		rdLister:              rdinformer.Lister(),
-		rdSynced:              rdinformer.Informer().HasSynced,
-		workqueue:             workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "distribution"),
-		recorder:              recorder,
-		InformerManager:       informerManager,
-		SkippedResourceConfig: utils.NewSkippedResourceConfig(),
+		Client:         client,
+		kubeclientset:  kubeclientset,
+		clientset:      clientset,
+		scheme:         schema,
+		restMapper:     restmapper,
+		dynamicClient:  dynamicClient,
+		discoverClient: discoverClient,
+		rdLister:       rdinformer.Lister(),
+		rdSynced:       rdinformer.Informer().HasSynced,
+		workqueue:      workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "distribution"),
+		recorder:       recorder,
 	}
 
-	controller.Store = NewDistributionStore()
+	controller.Store = NewKeyStore()
+	controller.RuleStore = NewParsedOverrideRulesStore()
+	controller.informersManager = genericmanager.NewInformerManager(dynamicClient, 0, ctx.Done())
+	controller.del = make(chan string, ChannelSize)
+	controller.cre = make(chan BindObject, ChannelSize)
 
 	logger.Info("Setting up ResourceDistribution event handlers")
 	// Set up an event handler for when ResourceDistribution resources change
 	rdinformer.Informer().AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
+			// TODO: 创建对应资源的informer
 			controller.OnRDAdd(obj)
 		},
 		UpdateFunc: func(old, new interface{}) {
@@ -172,53 +187,6 @@ func NewDistributionController(ctx context.Context,
 	return controller
 }
 
-// 根据传入的Cluster对象，提取出Cluster的name、和label去找到ResourceDistribution，并将其入队列
-func (c *DistributionController) findRDbyCluster(ctx context.Context, obj interface{}) {
-	cluster, ok := obj.(v1alpha1.Cluster)
-	if ok {
-		name := cluster.Name
-		labels := cluster.Labels
-		// TODO: 查询所有ResourceDistribution
-		resourceDistributionList := v1.ResourceDistributionList{}
-		err := c.Client.List(ctx, &resourceDistributionList, nil)
-		if err != nil {
-			klog.Error("list all ResourceDistribution error:", err)
-			return
-		}
-		for _, item := range resourceDistributionList.Items {
-			if item.Spec.Placement.ClusterAffinity != nil {
-				clusterNames := item.Spec.Placement.ClusterAffinity.ClusterNames
-				labelSelector := item.Spec.Placement.ClusterAffinity.LabelSelector
-				if labelSelector != nil {
-					rdLabel := labelSelector.MatchLabels
-					intersect := maputil.Intersect(labels, rdLabel)
-					length := len(intersect)
-					if length > 0 {
-						// length > 0 说明resourceDistribution引用了该cluster
-						// 需要将该resourceDistribution入队列
-						namespaceKey, err := NamespaceKeyFunc(item)
-						if err != nil {
-							return
-						}
-						c.workqueue.Add(namespaceKey)
-						continue
-					}
-				}
-				// 判断clustername是否在resourceDistribution引用的clustername中
-				contain := slice.Contain(clusterNames, name)
-				if contain {
-					// 如果contain为true说明resourceDistribution引用了cluster
-					namespaceKey, err := NamespaceKeyFunc(item)
-					if err != nil {
-						return
-					}
-					c.workqueue.Add(namespaceKey)
-				}
-			}
-		}
-	}
-}
-
 func NamespaceKeyFunc(obj interface{}) (string, error) {
 	var key string
 	var err error
@@ -230,14 +198,41 @@ func NamespaceKeyFunc(obj interface{}) (string, error) {
 }
 
 func (c *DistributionController) enqueue(obj interface{}) {
-	var key string
-	var err error
-	if key, err = toolscache.MetaNamespaceKeyFunc(obj); err != nil {
-		klog.Info("enqueue error:", err)
-		utilruntime.HandleError(err)
-		return
+	c.workqueue.Add(obj)
+}
+
+// 开启多个goroutinue去创建workload
+func (c *DistributionController) TestChannel() {
+
+	for i := 0; i < 3; i++ {
+		go createW(c.cre)
+		go deleteW(c.del)
 	}
-	c.workqueue.Add(key)
+
+}
+
+func createW(bo chan BindObject) {
+
+	klog.Error("=======>createW")
+	for {
+		select {
+		case obj := <-bo:
+			klog.Info("接收到对象开始创建workload", obj.RdWidekey)
+		}
+	}
+
+}
+
+func deleteW(names chan string) {
+
+	klog.Info("========>deleteW")
+	for {
+		select {
+		case name := <-names:
+			klog.Info("开始删除workload", name)
+		}
+	}
+
 }
 
 func (c *DistributionController) Start(ctx context.Context) error {
@@ -269,9 +264,8 @@ func (c *DistributionController) Run(ctx context.Context, workers int) error {
 	}
 	logger.Info("Started workers")
 
-	// TODO: 处理其他事件监听
-	c.EventHandler = NewFilteringHandlerOnAllEvents(c.EventFilter, c.OnAdd, c.OnUpdate, c.OnDelete)
-	go c.discoverResources(30 * time.Second)
+	klog.Info("Starting TestChannel")
+	c.TestChannel()
 
 	<-ctx.Done()
 	logger.Info("Shutting down workers")
@@ -301,19 +295,19 @@ func (c *DistributionController) processNextWorkItem(ctx context.Context) bool {
 		// put back on the workqueue and attempted again after a back-off
 		// period.
 		defer c.workqueue.Done(obj)
-		var key string
+		var key *EventObject
 		var ok bool
 		// We expect strings to come off the workqueue. These are of the
 		// form namespace/name. We do this as the delayed nature of the
 		// workqueue means the items in the informer cache may actually be
 		// more up to date that when the item was initially put onto the
 		// workqueue.
-		if key, ok = obj.(string); !ok {
+		if key, ok = obj.(*EventObject); !ok {
 			// As the item in the workqueue is actually invalid, we call
 			// Forget here else we'd go into a loop of attempting to
 			// process a work item that is invalid.
 			c.workqueue.Forget(obj)
-			utilruntime.HandleError(fmt.Errorf("expected string in workqueue but got %#v", obj))
+			utilruntime.HandleError(fmt.Errorf("expected EventObj in workqueue but got %#v", obj))
 			return nil
 		}
 		// Run the syncHandler, passing it the namespace/name string of the
@@ -321,7 +315,7 @@ func (c *DistributionController) processNextWorkItem(ctx context.Context) bool {
 		if err := c.syncHandler(ctx, key); err != nil {
 			// Put the item back on the workqueue to handle any transient errors.
 			c.workqueue.AddRateLimited(key)
-			return fmt.Errorf("error syncing '%s': %s, requeuing", key, err.Error())
+			return fmt.Errorf("error syncing '%v': %s, requeuing", key, err.Error())
 		}
 		// Finally, if no error occurs we Forget this item so it does not
 		// get queued again until another change happens.
@@ -338,68 +332,278 @@ func (c *DistributionController) processNextWorkItem(ctx context.Context) bool {
 	return true
 }
 
-func (c *DistributionController) syncHandler(ctx context.Context, key string) error {
+func (c *DistributionController) syncHandler(ctx context.Context, eventObj *EventObject) error {
 	// Convert the namespace/name string into a distinct namespace and name
-	logger := klog.LoggerWithValues(klog.FromContext(ctx), "resourceName", key)
+	//logger := klog.LoggerWithValues(klog.FromContext(ctx), "resourceName", key)
 
-	namespace, name, err := toolscache.SplitMetaNamespaceKey(key)
-	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("invalid resource key: %s", key))
-		return nil
-	}
+	switch eventObj.EventType {
 
-	// Get the resource with this namespace/name
-	rd, err := c.rdLister.ResourceDistributions(namespace).Get(name)
-	if err != nil {
-		// The RD resource may no longer exist, in which case we stop
-		// processing.
-		if errors.IsNotFound(err) {
-			//utilruntime.HandleError(fmt.Errorf("ResourceDistributions '%s' in work queue no longer exists", key))
-			return nil
+	case EventCreate:
+		klog.Info("EventCreate")
+		err := c.eventAdd(ctx, eventObj)
+		if err != nil {
+			klog.Error("eventAdd error", "error", err)
+			return err
 		}
-		return err
-	}
-
-	if rd.ObjectMeta.DeletionTimestamp.IsZero() {
-		if !controllerutil.ContainsFinalizer(rd, Finalizer) {
-			if err = c.updateExternalResources(context.Background(), rd); err != nil {
-				logger.Error(err, "updateExternalResources error")
-				return err
-			}
+	case EventUpdate:
+		klog.Info("EventUpdate")
+		err := c.eventUpdate(ctx, eventObj)
+		if err != nil {
+			klog.Error("eventUpdate error", "error", err)
+			return err
 		}
-	} else {
-		// The object is being deleted
-		if controllerutil.ContainsFinalizer(rd, Finalizer) {
-			// our finalizer is present, so lets handle any external dependency
-			// before deleting the policy
-			if err = c.deleteExternalResources(ctx, rd); err != nil {
-				// if fail to delete the external dependency here, return with error
-				// so that it can be retried
-				return err
-			}
-			// remove our finalizer from the list and update it.
-			controllerutil.RemoveFinalizer(rd, Finalizer)
-			if err = c.Client.Update(ctx, rd); err != nil {
-				return err
-			}
+	case EventDelete:
+		klog.Info("EventDelete")
+		err := c.eventDelete(eventObj)
+		if err != nil {
+			klog.Error("eventDelete error", "error", err)
+			return err
 		}
 	}
 
-	err = c.applyWorkloads(ctx, rd)
-	if err != nil {
-		klog.Error("applyWorkloads error", err)
-		return err
-	}
-
-	// Finally, we update the status block of the Foo resource to reflect the
-	// current state of the world
-	//err = c.updateFooStatus(foo, deployment)
-	//if err != nil {
-	//	return err
+	//if rd.ObjectMeta.DeletionTimestamp.IsZero() {
+	//	if !controllerutil.ContainsFinalizer(rd, Finalizer) {
+	//		if err = c.updateExternalResources(context.Background(), rd); err != nil {
+	//			logger.Error(err, "updateExternalResources error")
+	//			return err
+	//		}
+	//	}
+	//} else {
+	//	// The object is being deleted
+	//	if controllerutil.ContainsFinalizer(rd, Finalizer) {
+	//		// our finalizer is present, so lets handle any external dependency
+	//		// before deleting the policy
+	//		if err = c.deleteExternalResources(ctx, rd); err != nil {
+	//			// if fail to delete the external dependency here, return with error
+	//			// so that it can be retried
+	//			return err
+	//		}
+	//		// remove our finalizer from the list and update it.
+	//		controllerutil.RemoveFinalizer(rd, Finalizer)
+	//		if err = c.Client.Update(ctx, rd); err != nil {
+	//			return err
+	//		}
+	//	}
 	//}
 
 	//c.recorder.Event(rd, corev1.EventTypeNormal, SuccessSynced, MessageResourceSynced)
 	return nil
+}
+
+func (c *DistributionController) eventAdd(ctx context.Context, object *EventObject) error {
+
+	// 如果是添加操作
+	resource, err := findReferenceResource(&object.Old.Spec.ResourceSelector)
+	if err != nil {
+		klog.Error("get reference resource error:", err)
+		return err
+	}
+	namespaceKey, err := toolscache.MetaNamespaceKeyFunc(object.Old)
+	if err != nil {
+		klog.Error("get namespacekey error:", err)
+		return err
+	}
+	c.Store.StoreRelationship(resource, namespaceKey)
+
+	// 先创建rules
+	err = c.storeRules(ctx, object.Old)
+	if err != nil {
+		klog.Error("store rules error:", err)
+		return err
+	}
+	// 再创建informer
+	err = c.installInformer(object.Old)
+	if err != nil {
+		klog.Error("install informer error:", err)
+		return err
+	}
+	return nil
+
+}
+
+func (c *DistributionController) eventUpdate(ctx context.Context, object *EventObject) error {
+	// 如果是更新操作
+	b, b1, b2 := changes(object.Old, object.New)
+
+	if b && b1 && b2 {
+		return nil
+	}
+
+	oldResource, err := findReferenceResource(&object.Old.Spec.ResourceSelector)
+	if err != nil {
+		return err
+	}
+	oldNamespaceKey, err := toolscache.MetaNamespaceKeyFunc(object.Old)
+	if err != nil {
+		return err
+	}
+	newResource, err := findReferenceResource(&object.New.Spec.ResourceSelector)
+	if err != nil {
+		return err
+	}
+	if b {
+		// 如果resourceSelector变化了，需要更新rules
+		c.Store.RemoveRelationship(oldResource, oldNamespaceKey)
+		c.Store.StoreRelationship(newResource, oldNamespaceKey)
+		// 判断是否需要删除informer
+		gvr, err := getGroupVersionResource(c.restMapper, oldResource.GroupVersionKind())
+		if err != nil {
+			return err
+		}
+		numbers := c.informersManager.Numbers(gvr)
+		if numbers == 1 {
+			c.informersManager.Remove(gvr)
+		}
+	}
+	c.RuleStore.DeleteAll(oldNamespaceKey)
+	overrideRules, err := ParseResourceDistribution(ctx, c.Client, object.New)
+	if err != nil {
+		return err
+	}
+	c.RuleStore.StoreMap(oldNamespaceKey, overrideRules)
+
+	gvr, err := getGroupVersionResource(c.restMapper, newResource.GroupVersionKind())
+	if err != nil {
+		return err
+	}
+	// TODO
+	c.informersManager.ForResource(gvr, nil)
+
+	return nil
+}
+
+func (c *DistributionController) eventDelete(object *EventObject) error {
+	// 如果是删除操作
+	wideKey, err := findReferenceResource(&object.Old.Spec.ResourceSelector)
+	if err != nil {
+		return err
+	}
+	namespaceKey, err := toolscache.MetaNamespaceKeyFunc(object.Old)
+	if err != nil {
+		return err
+	}
+
+	c.Store.RemoveRelationship(wideKey, namespaceKey)
+	c.RuleStore.DeleteAll(namespaceKey)
+	// 判断是否需要删除informer
+	key, err := findReferenceResource(&object.Old.Spec.ResourceSelector)
+	if err != nil {
+		return err
+	}
+	gvr, err := getGroupVersionResource(c.restMapper, key.GroupVersionKind())
+	if err != nil {
+		return err
+	}
+	numbers := c.informersManager.Numbers(gvr)
+	if numbers == 1 {
+		c.informersManager.Remove(gvr)
+	}
+	return nil
+}
+
+func changes(old, new *v1.ResourceDistribution) (bool, bool, bool) {
+	var resourceChanged, placementChanged, overrideRulesChanged bool
+
+	equal := reflect.DeepEqual(old.Spec.ResourceSelector, new.Spec.ResourceSelector)
+	if equal {
+		resourceChanged = true
+	}
+
+	equal = reflect.DeepEqual(old.Spec.Placement, new.Spec.Placement)
+	if equal {
+		placementChanged = true
+	}
+
+	equal = reflect.DeepEqual(old.Spec.OverrideRules, new.Spec.OverrideRules)
+	if equal {
+		overrideRulesChanged = true
+	}
+
+	return resourceChanged, placementChanged, overrideRulesChanged
+}
+
+func (c *DistributionController) installInformer(rd *v1.ResourceDistribution) error {
+
+	handler := &EventHandler{
+		controller: c,
+	}
+	wideKey, err := findReferenceResource(&rd.Spec.ResourceSelector)
+	if err != nil {
+		return err
+	}
+	groupVersionKind := wideKey.GroupVersionKind()
+	gvr, err := getGroupVersionResource(c.restMapper, groupVersionKind)
+	if err != nil {
+		return err
+	}
+	c.informersManager.ForResource(gvr, handler)
+	return nil
+
+}
+
+func (c *DistributionController) storeRules(ctx context.Context, rd *v1.ResourceDistribution) error {
+
+	namespaceKey, err := toolscache.MetaNamespaceKeyFunc(rd)
+	if err != nil {
+		return err
+	}
+	rules, err := ParseResourceDistribution(ctx, c.Client, rd)
+	if err != nil {
+		return err
+	}
+	c.RuleStore.StoreMap(namespaceKey, rules)
+	return nil
+
+}
+
+func (c *DistributionController) comparedRules(ctx context.Context, rd *v1.ResourceDistribution) error {
+
+	namespaceKey, err := toolscache.MetaNamespaceKeyFunc(rd)
+	if err != nil {
+		return err
+	}
+	newRules, err := ParseResourceDistribution(ctx, c.Client, rd)
+	if err != nil {
+		return err
+	}
+	newRulesNames := maputil.Keys(newRules)
+	oldRules, exist := c.RuleStore.Get(namespaceKey)
+	if !exist {
+		for _, rule := range newRules {
+			c.RuleStore.Store(namespaceKey, rule)
+		}
+		return nil
+	}
+	oldRulesNames := maputil.Keys(oldRules)
+	// 找出存在oldRulesNames，但是不存在newRulesNames的规则，这些要删除
+	difference := slice.Difference(oldRulesNames, newRulesNames)
+
+	for _, ruleName := range difference {
+		c.del <- ruleName
+	}
+
+	return nil
+
+}
+
+func (c *DistributionController) removeRules(rd *v1.ResourceDistribution) error {
+
+	namespaceKey, err := toolscache.MetaNamespaceKeyFunc(rd)
+	if err != nil {
+		return err
+	}
+	rules, exist := c.RuleStore.Get(namespaceKey)
+	if !exist {
+		return nil
+	}
+	for _, rule := range rules {
+		c.del <- rule.RuleName
+	}
+
+	c.RuleStore.DeleteAll(namespaceKey)
+
+	return nil
+
 }
 
 func (c *DistributionController) updateExternalResources(ctx context.Context, rd *v1.ResourceDistribution) error {
@@ -407,7 +611,6 @@ func (c *DistributionController) updateExternalResources(ctx context.Context, rd
 		rd.Labels = make(map[string]string)
 	}
 	rd.ObjectMeta.Finalizers = append(rd.ObjectMeta.Finalizers, Finalizer)
-	rd.Labels[ResourceDistributionPolicy] = rd.Name
 	_, err := c.clientset.DistributionV1().ResourceDistributions(rd.Namespace).Update(ctx, rd, metav1.UpdateOptions{})
 	if err != nil {
 		klog.Error(err)
@@ -425,126 +628,12 @@ func (c *DistributionController) deleteExternalResources(ctx context.Context, rd
 	return nil
 }
 
-func (c *DistributionController) applyWorkloads(ctx context.Context, policy *v1.ResourceDistribution) error {
-	works, err := c.generateWorks(ctx, policy)
+func (c *DistributionController) fillWorkload(workload *v1.Workload, un unstructured.Unstructured) error {
+	marshalJSON, err := un.MarshalJSON()
 	if err != nil {
-		klog.Error(err)
-		return nil
+		return err
 	}
-	for _, work := range works {
-		var workObj v1.Workload
-		err = retry.RetryOnConflict(DefaultRetry, func() error {
-			err = c.Client.Get(ctx, types.NamespacedName{Name: work.Name, Namespace: work.Namespace}, &workObj)
-			if err != nil {
-				if errors.IsNotFound(err) {
-					err = c.Client.Create(ctx, &work)
-					if err != nil {
-						klog.Error(err)
-						return err
-					}
-					return nil
-				} else {
-					klog.Error(err)
-					return err
-				}
-			}
-			workObj.Spec = work.Spec
-			err = c.Client.Update(ctx, &workObj)
-			if err != nil {
-				return err
-			}
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-	}
-	return err
-}
-
-func (c *DistributionController) generateWorks(ctx context.Context, policy *v1.ResourceDistribution) ([]v1.Workload, error) {
-	clusterPlacement, err := c.getClusterName(ctx, policy)
-	if err != nil {
-		klog.Error(err)
-		return nil, err
-	}
-
-	workV2map := c.createWorkV2(clusterPlacement, policy)
-	overrideRules := policy.Spec.OverrideRules
-	unstructObjArr, err := fetchResourceTemplateByRD(c.dynamicClient, c.restMapper, policy)
-	if err != nil {
-		klog.Error(err)
-		return nil, err
-	}
-	var works []v1.Workload
-	var usedCluster []string
-	for _, item := range overrideRules {
-		var arrObj []unstructured.Unstructured
-		var clusterSlice []string
-		for _, unstructObj := range unstructObjArr {
-			deepCopyObj := unstructObj.DeepCopy()
-			options := getOverrideOption(&item)
-			err = applyJSONPatchs(deepCopyObj, options)
-			if err != nil {
-				klog.Error("apply json patch error:", err)
-				return nil, err
-			}
-			arrObj = append(arrObj, *deepCopyObj)
-		}
-		if item.TargetCluster == nil {
-			// 如果没有指定targetCluster，则使用placement中定义的cluster
-			clusterSlice = clusterPlacement
-		} else {
-			var byLabel []string
-			byLabel, err = c.getClusterNameByLabelSelector(item.TargetCluster.LabelSelector)
-			if err != nil {
-				return nil, err
-			}
-			clusterSlice = append(clusterSlice, byLabel...)
-			clusterSlice = append(clusterSlice, item.TargetCluster.ClusterNames...)
-			if err != nil {
-				klog.Error(err)
-				return nil, err
-			}
-		}
-		// 如果clusterSlices中存在不属于placement定义的clustername，需要将这部分排除
-		intersection := slice.Intersection(clusterPlacement, clusterSlice)
-		for _, s := range intersection {
-			wl := workV2map[s]
-			err = c.fillWorkload(&wl, arrObj)
-			if err != nil {
-				return nil, err
-			}
-			works = append(works, wl)
-		}
-		usedCluster = append(usedCluster, intersection...)
-	}
-	// 将useCluster去重，再和clusterPlacement比较，如果存在不同的，说明还有需要同步的不用override的集群
-	useClusterSet := set.NewSetFromSlice(usedCluster)
-	clusterPlacementSet := set.NewSetFromSlice(clusterPlacement)
-	minusSet := clusterPlacementSet.Minus(useClusterSet)
-	residue := minusSet.Values()
-	if len(residue) > 0 {
-		for _, cname := range residue {
-			work := workV2map[cname]
-			err = c.fillWorkload(&work, unstructObjArr)
-			if err != nil {
-				return nil, err
-			}
-			works = append(works, work)
-		}
-	}
-	return works, err
-}
-
-func (c *DistributionController) fillWorkload(workload *v1.Workload, uns []unstructured.Unstructured) error {
-	for _, un := range uns {
-		marshalJSON, err := un.MarshalJSON()
-		if err != nil {
-			return err
-		}
-		workload.Spec.WorkloadTemplate.Manifests = append(workload.Spec.WorkloadTemplate.Manifests, v1.Manifest{RawExtension: runtime.RawExtension{Raw: marshalJSON}})
-	}
+	workload.Spec.Manifest = v1.Manifest{RawExtension: runtime.RawExtension{Raw: marshalJSON}}
 	return nil
 }
 
@@ -616,44 +705,6 @@ func applyJSONPatchs(obj *unstructured.Unstructured, overrides []overrideOption)
 	return nil
 }
 
-func fetchResourceTemplateByRD(dynamicClient dynamic.Interface, restMapper meta.RESTMapper, rd *v1.ResourceDistribution) ([]unstructured.Unstructured, error) {
-
-	var unobjArr []unstructured.Unstructured
-	gvr, err := getGroupVersionResource(restMapper, schema.FromAPIVersionAndKind(rd.Spec.ResourceSelectors.APIVersion, rd.Spec.ResourceSelectors.Kind))
-	if err != nil {
-		return nil, err
-	}
-	ns := rd.Spec.ResourceSelectors.Namespace
-	name := rd.Spec.ResourceSelectors.Name
-	kind := rd.Spec.ResourceSelectors.Kind
-	if kind == "" {
-		err = fmt.Errorf("kind is empty")
-		return nil, err
-	}
-
-	if name != "" {
-		obj, err := dynamicClient.Resource(gvr).Namespace(ns).Get(context.TODO(), name, metav1.GetOptions{})
-		if err != nil {
-			return nil, err
-		}
-		unobjArr = append(unobjArr, *obj)
-	} else {
-		lists, err := dynamicClient.Resource(gvr).Namespace(ns).List(context.TODO(), metav1.ListOptions{})
-		if err != nil {
-			return nil, err
-		}
-		for _, item := range lists.Items {
-			unobjArr = append(unobjArr, item)
-		}
-	}
-	if err != nil {
-		klog.Error("Failed to transform object(%s/%s), Error: %v", ns, name, err)
-		return nil, err
-	}
-	return unobjArr, nil
-
-}
-
 func getGroupVersionResource(restMapper meta.RESTMapper, gvk schema.GroupVersionKind) (schema.GroupVersionResource, error) {
 	restMapping, err := restMapper.RESTMapping(gvk.GroupKind(), gvk.Version)
 	if err != nil {
@@ -675,131 +726,53 @@ func getOverrideOption(overrideRules *v1.RuleWithCluster) []overrideOption {
 	return overrideOptions
 }
 
-func (c *DistributionController) createWorkV2(clusterNames []string, rd *v1.ResourceDistribution) map[string]v1.Workload {
-	result := make(map[string]v1.Workload)
-	for _, name := range clusterNames {
-		workload := v1.Workload{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "Work",
-				APIVersion: distribution.GroupName + "/v1",
-			},
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      createWorkloadName(name, rd.Name),
-				Namespace: rd.Namespace,
-				Labels: map[string]string{
-					SyncCluster:                name,
-					ResourceDistributionPolicy: rd.Name,
-				},
-				OwnerReferences: []metav1.OwnerReference{
-					*metav1.NewControllerRef(rd, schema.GroupVersionKind{
-						Group:   "distribution.kubesphere.io",
-						Version: "v1",
-						Kind:    "ResourceDistribution",
-					}),
-				},
-			},
-			Spec:   v1.WorkloadSpec{},
-			Status: v1.WorkloadStatus{},
+//func (c *DistributionController) createWorkV2(clusterNames []string, rd *v1.ResourceDistribution) map[string]v1.Workload {
+//	result := make(map[string]v1.Workload)
+//	for _, name := range clusterNames {
+//		workload := v1.Workload{
+//			TypeMeta: metav1.TypeMeta{
+//				Kind:       "Work",
+//				APIVersion: distribution.GroupName + "/v1",
+//			},
+//			ObjectMeta: metav1.ObjectMeta{
+//				Name:      createWorkloadName(name, rd.Name),
+//				Namespace: rd.Namespace,
+//				Labels: map[string]string{
+//					SyncCluster:                name,
+//					ResourceDistributionPolicy: rd.Name,
+//				},
+//				OwnerReferences: []metav1.OwnerReference{
+//					*metav1.NewControllerRef(rd, schema.GroupVersionKind{
+//						Group:   "distribution.kubesphere.io",
+//						Version: "v1",
+//						Kind:    "ResourceDistribution",
+//					}),
+//				},
+//			},
+//			Spec:   v1.WorkloadSpec{},
+//			Status: v1.WorkloadStatus{},
+//		}
+//		result[name] = workload
+//	}
+//	return result
+//}
+
+func (c *DistributionController) GetStoredResources() (map[schema.GroupVersionResource]struct{}, error) {
+	templates := c.Store.GetAllTemplates()
+	m := make(map[schema.GroupVersionResource]struct{})
+	for _, template := range templates {
+		gvk := schema.GroupVersionKind{
+			Group:   template.Group,
+			Version: template.Version,
+			Kind:    template.Kind,
 		}
-		result[name] = workload
-	}
-	return result
-}
-
-func createWorkloadName(clusterName, rdname string) string {
-	if clusterName == "" {
-		return "null"
-	}
-	return "workload-" + clusterName + "-" + rdname
-}
-
-func (c *DistributionController) discoverResources(period time.Duration) {
-	//klog.Infof("===>Start to discover resources")
-	wait.Until(func() {
-		newResources := GetDeletableResources(&c.discoverClient)
-		for r := range newResources {
-			if c.InformerManager.IsHandlerExist(r, c.EventHandler) || c.gvrDisabled(r) {
-				continue
-			}
-			//klog.Infof("Setup informer for %s", r.String())
-			c.InformerManager.ForResource(r, c.EventHandler)
-		}
-		c.InformerManager.Start()
-	}, period, c.stopCh)
-}
-
-// gvrDisabled returns whether GroupVersionResource is disabled.
-func (c *DistributionController) gvrDisabled(gvr schema.GroupVersionResource) bool {
-	if c.SkippedResourceConfig == nil {
-		return false
-	}
-
-	if c.SkippedResourceConfig.GroupVersionDisabled(gvr.GroupVersion()) {
-		return true
-	}
-	if c.SkippedResourceConfig.GroupDisabled(gvr.Group) {
-		return true
-	}
-
-	gvks, err := c.restMapper.KindsFor(gvr)
-	if err != nil {
-		klog.Errorf("gvr(%s) transform failed: %v", gvr.String(), err)
-		return false
-	}
-
-	for _, gvk := range gvks {
-		if c.SkippedResourceConfig.GroupVersionKindDisabled(gvk) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// All discovery errors are considered temporary. Upon encountering any error,
-// GetDeletableResources will log and return any discovered resources it was
-// able to process (which may be none).
-func GetDeletableResources(discoveryClient discovery.ServerResourcesInterface) map[schema.GroupVersionResource]struct{} {
-	preferredResources, err := discoveryClient.ServerPreferredResources()
-	if err != nil {
-		if discovery.IsGroupDiscoveryFailedError(err) {
-			klog.Warningf("Failed to discover some groups: %v", err.(*discovery.ErrGroupDiscoveryFailed).Groups)
-		} else {
-			klog.Warningf("Failed to discover preferred resources: %v", err)
-		}
-	}
-	if preferredResources == nil {
-		return map[schema.GroupVersionResource]struct{}{}
-	}
-
-	// This is extracted from discovery.GroupVersionResources to allow tolerating
-	// failures on a per-resource basis.
-	deletableResources := discovery.FilteredBy(discovery.SupportsAllVerbs{Verbs: []string{"delete", "list", "watch"}}, preferredResources)
-	deletableGroupVersionResources := map[schema.GroupVersionResource]struct{}{}
-	for _, rl := range deletableResources {
-		gv, err := schema.ParseGroupVersion(rl.GroupVersion)
+		resource, err := getGroupVersionResource(c.restMapper, gvk)
 		if err != nil {
-			klog.Warningf("Ignore invalid discovered resource %q: %v", rl.GroupVersion, err)
-			continue
+			return nil, err
 		}
-		for i := range rl.APIResources {
-			deletableGroupVersionResources[schema.GroupVersionResource{Group: gv.Group, Version: gv.Version, Resource: rl.APIResources[i].Name}] = struct{}{}
-		}
+		m[resource] = struct{}{}
 	}
-
-	return deletableGroupVersionResources
-}
-
-func NewFilteringHandlerOnAllEvents(filterFunc func(obj interface{}) bool, addFunc func(obj interface{}),
-	updateFunc func(oldObj, newObj interface{}), deleteFunc func(obj interface{})) toolscache.ResourceEventHandler {
-	return &toolscache.FilteringResourceEventHandler{
-		FilterFunc: filterFunc,
-		Handler: toolscache.ResourceEventHandlerFuncs{
-			AddFunc:    addFunc,
-			UpdateFunc: updateFunc,
-			DeleteFunc: deleteFunc,
-		},
-	}
+	return m, nil
 }
 
 // EventFilter tells if an object should be take care of.
@@ -808,16 +781,11 @@ func NewFilteringHandlerOnAllEvents(filterFunc func(obj interface{}) bool, addFu
 // - kube-*
 // If '--skipped-propagating-namespaces' is specified, all APIs in the skipped-propagating-namespaces will be ignored.
 func (c *DistributionController) EventFilter(obj interface{}) bool {
-	key, err := ClusterWideKeyFunc(obj)
+	key, err := keys.ClusterWideKeyFunc(obj)
 	if err != nil {
 		return false
 	}
-	clusterWideKey, ok := key.(keys.ClusterWideKey)
-	if !ok {
-		klog.Errorf("Invalid key")
-		return false
-	}
-	if IsReservedNamespace(clusterWideKey.Namespace) {
+	if keys.IsReservedNamespace(key.Namespace) {
 		return false
 	}
 	// if SkippedPropagatingNamespaces is set, skip object events in these namespaces.
@@ -838,12 +806,6 @@ func (c *DistributionController) EventFilter(obj interface{}) bool {
 		}
 	}
 
-	// 判断这个资源和RD是否对应
-	wideKeyToString := WideKeyToString(clusterWideKey)
-	_, exist := c.findResourceDistributionByResourceKey(wideKeyToString)
-	if exist {
-		return true
-	}
 	return false
 }
 
@@ -853,8 +815,7 @@ func (c *DistributionController) notifyRD(obj interface{}) {
 		klog.Errorf("Failed to transform object, error: %v", err)
 		return
 	}
-	wideKeyToString := WideKeyToString(wideKey)
-	distributionKey, exist := c.findResourceDistributionByResourceKey(wideKeyToString)
+	distributionKey, exist := c.findResourceDistributionByResourceKey(wideKey)
 	if !exist {
 		return
 	}
@@ -864,12 +825,13 @@ func (c *DistributionController) notifyRD(obj interface{}) {
 }
 
 // findResourceDistributionKey find the resource distribution key.
-func (c DistributionController) findResourceDistributionByResourceKey(key string) ([]string, bool) {
-	res := c.Store.GetAllResources()
+func (c *DistributionController) findResourceDistributionByResourceKey(key keys.ClusterWideKey) ([]string, bool) {
+	res := c.Store.GetAllTemplates()
+	var result []string
 	for _, re := range res {
-		if strings.HasPrefix(key, re) {
-			distributionsKey := c.Store.GetDistributionsByResource(re)
-			return distributionsKey, true
+		match := keys.PrefixMatch(key, re)
+		if match {
+			result = append(result, c.Store.GetDistributions(re)...)
 		}
 	}
 	return nil, false
@@ -883,7 +845,6 @@ func (c *DistributionController) OnAdd(obj interface{}) {
 
 // OnUpdate handles object update event and push the object to queue.
 func (c *DistributionController) OnUpdate(oldObj, newObj interface{}) {
-	klog.Info("=======>OnUpdate")
 	unstructuredOldObj, err := utils.ToUnstructured(oldObj)
 	if err != nil {
 		klog.Errorf("Failed to transform oldObj, error: %v", err)
@@ -913,7 +874,7 @@ func (c *DistributionController) storeRelationships(obj interface{}) error {
 	if !ok {
 		return fmt.Errorf("obj is not ResourceDistribution")
 	}
-	key, err := getResourceKey(resourceDistribution)
+	customeResourceKey, err := getResourceKey(resourceDistribution)
 	if err != nil {
 		return err
 	}
@@ -922,18 +883,17 @@ func (c *DistributionController) storeRelationships(obj interface{}) error {
 		klog.Error("NamespaceKeyFunc error:", err)
 		return err
 	}
-	c.Store.StoreResourcePointToDistribution(key, namespaceKey)
-	c.Store.StoreDistributionPointToResource(namespaceKey, key)
+	c.Store.StoreRelationship(customeResourceKey, namespaceKey)
 	return nil
 }
 
-func getResourceKey(resourceDistribution *v1.ResourceDistribution) (string, error) {
-	wideKey, err := findReferenceResource(&resourceDistribution.Spec.ResourceSelectors)
+func getResourceKey(resourceDistribution *v1.ResourceDistribution) (keys.ClusterWideKey, error) {
+	wideKey, err := findReferenceResource(&resourceDistribution.Spec.ResourceSelector)
 	if err != nil {
 		klog.Error("findReferenceResource error:", err)
-		return "", err
+		return keys.ClusterWideKey{}, err
 	}
-	return WideKeyToString(wideKey), nil
+	return wideKey, nil
 }
 
 // remove resource and rd relation
@@ -942,7 +902,7 @@ func (c *DistributionController) removeRelationships(obj interface{}) error {
 	if !ok {
 		return fmt.Errorf("obj is not ResourceDistribution")
 	}
-	key, err := getResourceKey(resourceDistribution)
+	customrResourceKey, err := getResourceKey(resourceDistribution)
 	if err != nil {
 		return err
 	}
@@ -951,12 +911,11 @@ func (c *DistributionController) removeRelationships(obj interface{}) error {
 		klog.Error("NamespaceKeyFunc error:", err)
 		return err
 	}
-	c.Store.RemoveDistributionByResource(key, namespaceKey)
-	c.Store.RemoveResourceByDistribution(namespaceKey)
+	c.Store.RemoveRelationship(customrResourceKey, namespaceKey)
 	return nil
 }
 
-func (c DistributionController) removeUnusedWorkload(oldObj, newObj interface{}) {
+func (c *DistributionController) removeUnusedWorkload(oldObj, newObj interface{}) {
 	oldRd, ok := oldObj.(*v1.ResourceDistribution)
 	if !ok {
 		klog.Error("oldObj is not ResourceDistribution")
@@ -976,11 +935,11 @@ func (c DistributionController) removeUnusedWorkload(oldObj, newObj interface{})
 	// 进行差集比较,然后删除workload
 	difference := slice.Difference(oldClusters, newClusters)
 	if len(difference) > 0 {
-		for _, custerName := range difference {
+		for _, _ = range difference {
 			var wl v1.Workload
 			err = c.Client.Get(context.Background(), types.NamespacedName{
 				Namespace: oldRd.Namespace,
-				Name:      createWorkloadName(custerName, oldRd.Name),
+				Name:      "",
 			}, &wl)
 			if err != nil {
 				if errors.IsNotFound(err) {
@@ -997,13 +956,22 @@ func (c DistributionController) removeUnusedWorkload(oldObj, newObj interface{})
 }
 
 func (c *DistributionController) OnRDAdd(obj interface{}) {
-	// store resource and rd relation
-	klog.Info("=======>OnRDAdd")
+
 	err := c.storeRelationships(obj)
 	if err != nil {
 		klog.Error("storeRelationships error:", err)
 	}
-	c.enqueue(obj)
+
+	resourceDistribution := obj.(*v1.ResourceDistribution)
+
+	eventObject := &EventObject{
+		EventType: EventCreate,
+		Old:       resourceDistribution,
+		New:       resourceDistribution,
+	}
+
+	c.enqueue(eventObject)
+
 }
 
 func (c *DistributionController) OnRDUpdate(oldObj, newObj interface{}) {
@@ -1022,39 +990,65 @@ func (c *DistributionController) OnRDUpdate(oldObj, newObj interface{}) {
 		klog.V(4).Infof("Ignore update event of object (kind=%s, %s/%s) as specification no change", unstructuredOldObj.GetKind(), unstructuredOldObj.GetNamespace(), unstructuredOldObj.GetName())
 		return
 	}
-	err = c.removeRelationships(oldObj)
-	if err != nil {
-		klog.Error("removeRelationships error:", err)
-		return
-	}
-	err = c.storeRelationships(newObj)
-	if err != nil {
-		klog.Error("storeRelationships error:", err)
-		return
-	}
-	c.removeUnusedWorkload(oldObj, newObj)
-	c.enqueue(newObj)
-}
 
-func (c *DistributionController) OnRDDelete(obj interface{}) {
-	rd, ok := obj.(*v1.ResourceDistribution)
+	oldRd, ok := oldObj.(*v1.ResourceDistribution)
 	if !ok {
 		return
 	}
-	key, err := findReferenceResource(&rd.Spec.ResourceSelectors)
-	if err != nil {
-		klog.Error(err)
+	newRd, ok := newObj.(*v1.ResourceDistribution)
+	if !ok {
 		return
 	}
-	namespaceKey, err := NamespaceKeyFunc(rd)
-	if err != nil {
-		klog.Error("NamespaceKeyFunc error:", err)
+
+	equal := reflect.DeepEqual(oldRd.Spec.Placement, newRd.Spec.Placement)
+	if !equal {
+		err = c.removeRelationships(oldObj)
+		if err != nil {
+			return
+		}
+		err = c.storeRelationships(newObj)
+		if err != nil {
+			return
+		}
+	}
+
+	eventObj := &EventObject{
+		EventType: EventUpdate,
+		Old:       oldRd,
+		New:       newRd,
+	}
+
+	c.enqueue(eventObj)
+
+}
+
+func (c *DistributionController) OnRDDelete(obj interface{}) {
+
+	resourceDistribution, ok := obj.(*v1.ResourceDistribution)
+	if !ok {
+		klog.Error("obj is not ResourceDistribution")
 		return
 	}
-	wideKeyToString := WideKeyToString(key)
-	c.Store.RemoveDistributionByResource(wideKeyToString, namespaceKey)
-	c.Store.RemoveResourceByDistribution(namespaceKey)
-	c.enqueue(obj)
+	eventObj := &EventObject{
+		EventType: EventDelete,
+		Old:       resourceDistribution,
+		New:       resourceDistribution,
+	}
+
+	c.enqueue(eventObj)
+
+}
+
+func (c *DistributionController) findResourceDistribution(key string) (*v1.ResourceDistribution, error) {
+	namespace, name, err := toolscache.SplitMetaNamespaceKey(key)
+	if err != nil {
+		return nil, err
+	}
+	rd, err := c.rdLister.ResourceDistributions(namespace).Get(name)
+	if err != nil {
+		return nil, err
+	}
+	return rd, nil
 }
 
 func findReferenceResource(resourceSelector *v1.ResourceSelector) (keys.ClusterWideKey, error) {
@@ -1064,38 +1058,16 @@ func findReferenceResource(resourceSelector *v1.ResourceSelector) (keys.ClusterW
 	if resourceSelector.Kind == "" {
 		return keys.ClusterWideKey{}, fmt.Errorf("resourceSelector Kind is empty")
 	}
-	apiversion := strings.Split(resourceSelector.APIVersion, "/")
+	gv, err := schema.ParseGroupVersion(resourceSelector.APIVersion)
+	if err != nil {
+		return keys.ClusterWideKey{}, err
+	}
 	key := keys.ClusterWideKey{
+		Group:     gv.Group,
+		Version:   gv.Version,
 		Kind:      resourceSelector.Kind,
 		Name:      resourceSelector.Name,
 		Namespace: resourceSelector.Namespace,
 	}
-	if len(apiversion) == 2 {
-		key.Group = apiversion[0]
-		key.Version = apiversion[1]
-	} else {
-		key.Version = apiversion[0]
-	}
 	return key, nil
-}
-
-func ClusterWideKeyFunc(obj interface{}) (interface{}, error) {
-	return keys.ClusterWideKeyFunc(obj)
-}
-
-func IsReservedNamespace(namespace string) bool {
-	return strings.HasPrefix(namespace, KubernetesReservedNSPrefix) || strings.HasPrefix(namespace, "kubesphere-")
-}
-
-func WideKeyToString(key keys.ClusterWideKey) string {
-	if key.Group == "" {
-		if key.Namespace == "" {
-			return fmt.Sprintf("%s/%s/%s", key.Version, key.Kind, key.Name)
-		}
-		return fmt.Sprintf("%s/%s/%s/%s", key.Version, key.Kind, key.Namespace, key.Name)
-	}
-	if key.Namespace == "" {
-		return fmt.Sprintf("%s/%s/%s/%s", key.Group, key.Version, key.Kind, key.Name)
-	}
-	return fmt.Sprintf("%s/%s/%s/%s/%s", key.Group, key.Version, key.Kind, key.Namespace, key.Name)
 }

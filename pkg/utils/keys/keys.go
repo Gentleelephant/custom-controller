@@ -2,12 +2,15 @@ package keys
 
 import (
 	"fmt"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/klog/v2"
 )
+
+const KubernetesReservedNSPrefix = "kube-"
 
 // ClusterWideKey is the object key which is a unique identifier under a cluster, across all resources.
 type ClusterWideKey struct {
@@ -108,6 +111,10 @@ func (f FederatedKey) String() string {
 	return fmt.Sprintf("cluster=%s, %s, kind=%s, %s", f.Cluster, f.GroupVersion().String(), f.Kind, f.NamespaceKey())
 }
 
+func (f FederatedKey) ToString() string {
+	return fmt.Sprintf("%s/%s/%s/%s/%s", f.Cluster, f.Group, f.Version, f.Kind, f.NamespaceKey())
+}
+
 // FederatedKeyFunc generates a FederatedKey for object.
 func FederatedKeyFunc(cluster string, obj interface{}) (FederatedKey, error) {
 	key := FederatedKey{}
@@ -126,4 +133,32 @@ func FederatedKeyFunc(cluster string, obj interface{}) (FederatedKey, error) {
 	key.ClusterWideKey = cwk
 
 	return key, nil
+}
+
+// PrefixMatch k1是否具有k2的前缀
+func PrefixMatch(k1, prefix ClusterWideKey) bool {
+	s1 := WideKeyToString(k1)
+	s2 := WideKeyToString(prefix)
+	if strings.HasPrefix(s1, s2) {
+		return true
+	}
+	return false
+}
+
+func IsReservedNamespace(namespace string) bool {
+	return strings.HasPrefix(namespace, KubernetesReservedNSPrefix) || strings.HasPrefix(namespace, "kubesphere-")
+}
+
+func WideKeyToString(key ClusterWideKey) string {
+	if key.Group == "" {
+		if key.Namespace == "" {
+			return fmt.Sprintf("%s/%s/%s", key.Version, key.Kind, key.Name)
+		}
+		return fmt.Sprintf("%s/%s/%s/%s", key.Version, key.Kind, key.Namespace, key.Name)
+	}
+	if key.Namespace == "" {
+		return fmt.Sprintf("%s/%s/%s/%s", key.Group, key.Version, key.Kind, key.Name)
+	}
+	return fmt.Sprintf("%s/%s/%s/%s/%s", key.Group, key.Version, key.Kind, key.Namespace, key.Name)
+
 }

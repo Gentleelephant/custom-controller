@@ -28,10 +28,6 @@ type FakeDistributionV1 struct {
 	*testing.Fake
 }
 
-func (c *FakeDistributionV1) ClusterResourceDistributions() v1.ClusterResourceDistributionInterface {
-	return &FakeClusterResourceDistributions{c}
-}
-
 func (c *FakeDistributionV1) ResourceDistributions(namespace string) v1.ResourceDistributionInterface {
 	return &FakeResourceDistributions{c, namespace}
 }

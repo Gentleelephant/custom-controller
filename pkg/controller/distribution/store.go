@@ -1,6 +1,7 @@
 package distribution
 
 import (
+	"github.com/Gentleelephant/custom-controller/pkg/utils/keys"
 	"github.com/duke-git/lancet/v2/maputil"
 	"github.com/duke-git/lancet/v2/slice"
 	kvcache "github.com/patrickmn/go-cache"
@@ -11,7 +12,6 @@ type DistributionStore struct {
 	store *kvcache.Cache
 }
 
-// StoreResourcePointToDistribution apps/v1/namespace/deployments/  -> policy1,policy2,policy3
 func (d DistributionStore) StoreResourcePointToDistribution(key, value string) {
 	m := make(map[string]struct{})
 	resul, exist := d.store.Get(key)
@@ -123,61 +123,62 @@ func NewDistributionStore() DistributionStore {
 	}
 }
 
-type RelationStore struct {
+type KeyStore struct {
 	mu sync.Mutex
 
-	// apps/v1/namespace/deployments/nginx  -> policy1,policy2,policy3
-	resourceToRd map[string][]string
+	templateToDistribution map[keys.ClusterWideKey]map[string]struct{}
 
-	// policy1 -> apps/v1/namespace/deployments/nginx
-	rdToResource map[string]string
+	distributionToTemplate map[string]keys.ClusterWideKey
 }
 
-func (r *RelationStore) StoreReToRd(key string, value string) {
+func (r *KeyStore) StoreRelationship(key keys.ClusterWideKey, value string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.resourceToRd[key] = append(r.resourceToRd[key], value)
-}
 
-func (r *RelationStore) StoreRdToRe(key string, value string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.rdToResource[key] = value
-}
-
-func (r *RelationStore) GetReByRd(key string) string {
-	return r.rdToResource[key]
-}
-
-func (r *RelationStore) GetRdsByRe(key string) []string {
-	return r.resourceToRd[key]
-}
-
-func (r *RelationStore) GetAllResourceKey() []string {
-	return maputil.Keys(r.resourceToRd)
-}
-
-func (r *RelationStore) RemoveRdByRe(key string, remove string) {
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	array := r.resourceToRd[key]
-	indexOf := slice.IndexOf(array, remove)
-	if indexOf != -1 {
-		slice.DeleteAt(array, indexOf)
+	m1, ok := r.templateToDistribution[key]
+	if !ok {
+		m1 = make(map[string]struct{})
 	}
-	r.resourceToRd[key] = array
+	m1[value] = struct{}{}
+	r.templateToDistribution[key] = m1
+	r.distributionToTemplate[value] = key
 }
 
-func (r *RelationStore) RemoveReByRd(key string) {
+func (r *KeyStore) RemoveRelationship(key keys.ClusterWideKey, value string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	delete(r.rdToResource, key)
+
+	m1, ok := r.templateToDistribution[key]
+	if !ok {
+		return
+	}
+	delete(m1, value)
+	r.templateToDistribution[key] = m1
+	delete(r.distributionToTemplate, value)
 }
 
-func NewRelationStore() *RelationStore {
-	return &RelationStore{
-		resourceToRd: make(map[string][]string),
-		rdToResource: make(map[string]string),
+func (r *KeyStore) GetDistributions(key keys.ClusterWideKey) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	m1, ok := r.templateToDistribution[key]
+	if !ok {
+		return []string{}
+	}
+	return maputil.Keys(m1)
+}
+
+func (r *KeyStore) GetAllTemplates() []keys.ClusterWideKey {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return maputil.Values(r.distributionToTemplate)
+}
+
+func NewKeyStore() *KeyStore {
+	return &KeyStore{
+		mu:                     sync.Mutex{},
+		templateToDistribution: make(map[keys.ClusterWideKey]map[string]struct{}),
+		distributionToTemplate: make(map[string]keys.ClusterWideKey),
 	}
 }

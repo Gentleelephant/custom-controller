@@ -18,10 +18,6 @@ limitations under the License.
 
 package v1
 
-// ClusterResourceDistributionListerExpansion allows custom methods to be added to
-// ClusterResourceDistributionLister.
-type ClusterResourceDistributionListerExpansion interface{}
-
 // ResourceDistributionListerExpansion allows custom methods to be added to
 // ResourceDistributionLister.
 type ResourceDistributionListerExpansion interface{}

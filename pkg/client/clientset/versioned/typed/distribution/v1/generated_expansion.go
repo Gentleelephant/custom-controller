@@ -18,8 +18,6 @@ limitations under the License.
 
 package v1
 
-type ClusterResourceDistributionExpansion interface{}
-
 type ResourceDistributionExpansion interface{}
 
 type WorkloadExpansion interface{}

@@ -6,7 +6,7 @@ import (
 	clientset "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned"
 	informers "github.com/Gentleelephant/custom-controller/pkg/client/informers/externalversions"
 	"github.com/Gentleelephant/custom-controller/pkg/controller/distribution"
-	"github.com/Gentleelephant/custom-controller/pkg/utils/genericmanager"
+	webhook2 "github.com/Gentleelephant/custom-controller/pkg/webhook"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/discovery"
@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"time"
 )
 
@@ -69,7 +70,6 @@ func Start() {
 
 	informerFactory := informers.NewSharedInformerFactory(clientsets, time.Second*30)
 
-	controlPlaneInformerManager := genericmanager.NewSingleClusterInformerManager(dynamicClient, 0, ctx.Done())
 	discoveryClient, err := discovery.NewDiscoveryClientForConfig(mgr.GetConfig())
 
 	distributionController := distribution.NewDistributionController(ctx,
@@ -82,17 +82,16 @@ func Start() {
 		*discoveryClient,
 		informerFactory.Distribution().V1().ResourceDistributions(),
 		informerFactory.Cluster().V1alpha1().Clusters(),
-		controlPlaneInformerManager,
 	)
 
-	workloadController := distribution.NewController(ctx,
-		mgr.GetClient(),
-		kubeClient,
-		clientsets,
-		mgr.GetScheme(),
-		informerFactory.Cluster().V1alpha1().Clusters(),
-		mgr.GetRESTMapper(),
-		informerFactory.Distribution().V1().Workloads())
+	//workloadController := distribution.NewController(ctx,
+	//	mgr.GetClient(),
+	//	kubeClient,
+	//	clientsets,
+	//	mgr.GetScheme(),
+	//	informerFactory.Cluster().V1alpha1().Clusters(),
+	//	mgr.GetRESTMapper(),
+	//	informerFactory.Distribution().V1().Workloads())
 
 	informerFactory.Start(ctx.Done())
 
@@ -102,40 +101,17 @@ func Start() {
 		return
 	}
 
-	err = mgr.Add(workloadController)
-	if err != nil {
-		log.Fatalln(err)
-		return
-	}
+	// Add Webhook
+	mgr.GetWebhookServer().Register("/mutate-v1-rd", &webhook.Admission{
+		Handler: &webhook2.ResourceDistributionWebhook{
+			Client: mgr.GetClient(),
+		},
+	})
 
-	//err = c.Watch(&source.Kind{Type: &v1.ResourceDistribution{}}, &handler.EnqueueRequestForObject{})
+	//err = mgr.Add(workloadController)
 	//if err != nil {
-	//	klog.Error("watch resource distribution error", "error", err)
+	//	log.Fatalln(err)
 	//	return
-	//}
-	//err = c.Watch(&source.Kind{Type: &v1alpha1.Cluster{}}, &handler.EnqueueRequestForObject{})
-	//if err != nil {
-	//	klog.Error("watch cluster error", "error", err)
-	//	return
-	//}
-
-	//err = ctrl.NewControllerManagedBy(mgr).
-	//	For(&v1.ResourceDistribution{}).
-	//	Watches(&source.Kind{Type: &v1alpha1.Cluster{}}, &handler.EnqueueRequestForObject{}).
-	//	Complete(&distribution.Reconciler{Client: mgr.GetClient(),
-	//		RestMapper:    mgr.GetRESTMapper(),
-	//		Scheme:        mgr.GetScheme(),
-	//		DynamicClient: dynamic.NewForConfigOrDie(cfg),
-	//	})
-	//if err != nil {
-	//	log.Fatalln("create controller failed", err)
-	//}
-
-	//err = ctrl.NewControllerManagedBy(mgr).
-	//	For(&v1.Workload{}).
-	//	Complete(&distribution.WorkReconciler{Client: mgr.GetClient()})
-	//if err != nil {
-	//	log.Fatalln("create work controller failed", err)
 	//}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

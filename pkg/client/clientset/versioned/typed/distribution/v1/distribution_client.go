@@ -28,7 +28,6 @@ import (
 
 type DistributionV1Interface interface {
 	RESTClient() rest.Interface
-	ClusterResourceDistributionsGetter
 	ResourceDistributionsGetter
 	WorkloadsGetter
 }
@@ -36,10 +35,6 @@ type DistributionV1Interface interface {
 // DistributionV1Client is used to interact with features provided by the distribution.kubesphere.io group.
 type DistributionV1Client struct {
 	restClient rest.Interface
-}
-
-func (c *DistributionV1Client) ClusterResourceDistributions() ClusterResourceDistributionInterface {
-	return newClusterResourceDistributions(c)
 }
 
 func (c *DistributionV1Client) ResourceDistributions(namespace string) ResourceDistributionInterface {

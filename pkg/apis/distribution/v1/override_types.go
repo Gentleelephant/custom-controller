@@ -41,14 +41,13 @@ const (
 
 // RuleWithCluster defines the override rules on clusters.
 type RuleWithCluster struct {
-
+	RuleName string `json:"ruleName,omitempty"`
 	// TargetCluster defines restrictions on this override policy
 	// that only applies to resources propagated to the matching clusters.
 	// nil means matching all clusters.
 	TargetCluster *ClusterAffinity `json:"targetCluster,omitempty"`
 
 	// Overriders represents the override rules that would apply on resources
-	// +required
 	Overriders Overriders `json:"overriders"`
 }
 
@@ -91,38 +90,3 @@ const (
 	OverriderOpRemove  OverriderOperator = "remove"
 	OverriderOpReplace OverriderOperator = "replace"
 )
-
-//// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-//
-//// OverridePolicyList is a collection of OverridePolicy.
-//type OverridePolicyList struct {
-//	metav1.TypeMeta `json:",inline"`
-//	metav1.ListMeta `json:"metadata,omitempty"`
-//
-//	// Items holds a list of OverridePolicy.
-//	Items []OverridePolicy `json:"items"`
-//}
-//
-//
-//// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-//
-//// ClusterOverridePolicy represents the cluster-wide policy that overrides a group of resources to one or more clusters.
-//type ClusterOverridePolicy struct {
-//	metav1.TypeMeta   `json:",inline"`
-//	metav1.ObjectMeta `json:"metadata,omitempty"`
-//
-//	// Spec represents the desired behavior of ClusterOverridePolicy.
-//	Spec OverrideSpec `json:"spec"`
-//}
-//
-//// +kubebuilder:resource:scope="Cluster"
-//// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-//
-//// ClusterOverridePolicyList is a collection of ClusterOverridePolicy.
-//type ClusterOverridePolicyList struct {
-//	metav1.TypeMeta `json:",inline"`
-//	metav1.ListMeta `json:"metadata,omitempty"`
-//
-//	// Items holds a list of ClusterOverridePolicy.
-//	Items []ClusterOverridePolicy `json:"items"`
-//}

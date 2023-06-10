@@ -13,9 +13,9 @@ import (
 	"github.com/Gentleelephant/custom-controller/pkg/utils"
 )
 
-// SingleClusterInformerManager manages dynamic shared informer for all resources, include Kubernetes resource and
+// ClusterInformerManager manages dynamic shared informer for all resources, include Kubernetes resource and
 // custom resources defined by CustomResourceDefinition.
-type SingleClusterInformerManager interface {
+type ClusterInformerManager interface {
 	// ForResource builds a dynamic shared informer for 'resource' then set event handler.
 	// If the informer already exist, the event handler will be appended to the informer.
 	// The handler should not be nil.
@@ -58,7 +58,7 @@ type SingleClusterInformerManager interface {
 
 // NewSingleClusterInformerManager constructs a new instance of singleClusterInformerManagerImpl.
 // defaultResync with value '0' means no re-sync.
-func NewSingleClusterInformerManager(client dynamic.Interface, defaultResync time.Duration, parentCh <-chan struct{}) SingleClusterInformerManager {
+func NewSingleClusterInformerManager(client dynamic.Interface, defaultResync time.Duration, parentCh <-chan struct{}) ClusterInformerManager {
 	ctx, cancel := utils.ContextForChannel(parentCh)
 	return &singleClusterInformerManagerImpl{
 		informerFactory: dynamicinformer.NewDynamicSharedInformerFactory(client, defaultResync),

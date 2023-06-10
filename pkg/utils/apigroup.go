@@ -10,8 +10,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-// SkippedResourceConfig represents the configuration that identifies the API resources should be skipped from propagating.
-type SkippedResourceConfig struct {
+// SkippedConfig represents the configuration that identifies the API resources should be skipped from propagating.
+type SkippedConfig struct {
 	// Groups holds a collection of API group, all resources under this group will be skipped.
 	Groups map[string]struct{}
 	// GroupVersions holds a collection of API GroupVersion, all resource under this GroupVersion will be skipped.
@@ -26,9 +26,9 @@ var corev1EventGVK = schema.GroupVersionKind{
 	Kind:    "Event",
 }
 
-// NewSkippedResourceConfig to create SkippedResourceConfig
-func NewSkippedResourceConfig() *SkippedResourceConfig {
-	r := &SkippedResourceConfig{
+// NewSkippedResourceConfig to create SkippedConfig
+func NewSkippedResourceConfig() *SkippedConfig {
+	r := &SkippedConfig{
 		Groups:            map[string]struct{}{},
 		GroupVersions:     map[schema.GroupVersion]struct{}{},
 		GroupVersionKinds: map[schema.GroupVersionKind]struct{}{},
@@ -46,7 +46,7 @@ func NewSkippedResourceConfig() *SkippedResourceConfig {
 }
 
 // Parse parses the --skipped-propagating-apis input.
-func (r *SkippedResourceConfig) Parse(c string) error {
+func (r *SkippedConfig) Parse(c string) error {
 	// default(empty) input
 	if c == "" {
 		return nil
@@ -62,7 +62,7 @@ func (r *SkippedResourceConfig) Parse(c string) error {
 	return nil
 }
 
-func (r *SkippedResourceConfig) parseSingle(token string) error {
+func (r *SkippedConfig) parseSingle(token string) error {
 	switch strings.Count(token, "/") {
 	// Assume user don't want to skip the 'core'(no group name) group.
 	// So, it should be the case "<group>".
@@ -130,7 +130,7 @@ func (r *SkippedResourceConfig) parseSingle(token string) error {
 }
 
 // GroupVersionDisabled returns whether GroupVersion is disabled.
-func (r *SkippedResourceConfig) GroupVersionDisabled(gv schema.GroupVersion) bool {
+func (r *SkippedConfig) GroupVersionDisabled(gv schema.GroupVersion) bool {
 	if _, ok := r.GroupVersions[gv]; ok {
 		return true
 	}
@@ -138,7 +138,7 @@ func (r *SkippedResourceConfig) GroupVersionDisabled(gv schema.GroupVersion) boo
 }
 
 // GroupVersionKindDisabled returns whether GroupVersionKind is disabled.
-func (r *SkippedResourceConfig) GroupVersionKindDisabled(gvk schema.GroupVersionKind) bool {
+func (r *SkippedConfig) GroupVersionKindDisabled(gvk schema.GroupVersionKind) bool {
 	if _, ok := r.GroupVersionKinds[gvk]; ok {
 		return true
 	}
@@ -146,7 +146,7 @@ func (r *SkippedResourceConfig) GroupVersionKindDisabled(gvk schema.GroupVersion
 }
 
 // GroupDisabled returns whether Group is disabled.
-func (r *SkippedResourceConfig) GroupDisabled(g string) bool {
+func (r *SkippedConfig) GroupDisabled(g string) bool {
 	if _, ok := r.Groups[g]; ok {
 		return true
 	}
@@ -154,16 +154,16 @@ func (r *SkippedResourceConfig) GroupDisabled(g string) bool {
 }
 
 // DisableGroup to disable group.
-func (r *SkippedResourceConfig) DisableGroup(g string) {
+func (r *SkippedConfig) DisableGroup(g string) {
 	r.Groups[g] = struct{}{}
 }
 
 // DisableGroupVersion to disable GroupVersion.
-func (r *SkippedResourceConfig) DisableGroupVersion(gv schema.GroupVersion) {
+func (r *SkippedConfig) DisableGroupVersion(gv schema.GroupVersion) {
 	r.GroupVersions[gv] = struct{}{}
 }
 
 // DisableGroupVersionKind to disable GroupVersionKind.
-func (r *SkippedResourceConfig) DisableGroupVersionKind(gvk schema.GroupVersionKind) {
+func (r *SkippedConfig) DisableGroupVersionKind(gvk schema.GroupVersionKind) {
 	r.GroupVersionKinds[gvk] = struct{}{}
 }
