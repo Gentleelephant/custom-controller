@@ -506,16 +506,19 @@ func (c *WorkloadController) getClusterClient(ctx context.Context, work *distrib
 	cluster := v1alpha1.Cluster{}
 	err := c.Client.Get(ctx, client.ObjectKey{Name: clustersName}, &cluster)
 	if err != nil {
-		klog.Error(err)
+		klog.Error("get Cluster error: ", err)
+		return nil, err
 	}
 	config := string(cluster.Spec.Connection.KubeConfig)
 	restConfigFromKubeConfig, err := clientcmd.RESTConfigFromKubeConfig([]byte(config))
 	if err != nil {
 		klog.Error("failed to get rest config from kubeconfig: ", err)
+		return nil, err
 	}
 	ct, err := client.New(restConfigFromKubeConfig, client.Options{})
 	if err != nil {
 		klog.Error("failed to create ct: ", err)
+		return nil, err
 	}
 	return ct, nil
 }
@@ -569,16 +572,6 @@ func (c *WorkloadController) syncWork(ctx context.Context, work *distributionv1.
 			}
 			return nil
 		})
-		if err != nil {
-			klog.Error("update member resource failed:", err)
-			manifestStatus = distributionv1.ManifestStatus{
-				Resource: &manifest.RawExtension,
-				Time:     metav1.Time{},
-				Status:   distributionv1.WorkFailed,
-				Message:  err.Error(),
-			}
-			status.ManifestStatuses = append(status.ManifestStatuses, manifestStatus)
-		}
 		manifestStatus = distributionv1.ManifestStatus{
 			Resource: &manifest.RawExtension,
 			Time: metav1.Time{
