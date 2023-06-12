@@ -571,11 +571,19 @@ func (c *DistributionController) getClusterName(ctx context.Context, pr *v1.Reso
 	if pr.Spec.Placement == nil || pr.Spec.Placement.ClusterAffinity == nil {
 		// 如果没有指定placement，则使用所有的cluster
 		var clusterList v1alpha1.ClusterList
-		err := c.Client.List(ctx, &clusterList)
+		err := c.Client.List(ctx, &clusterList, &client.ListOptions{})
 		if err != nil {
 			return nil, err
 		}
 		for _, cluster := range clusterList.Items {
+			labels := cluster.Labels
+			if labels != nil {
+				// 如果是host集群，则跳过
+				_, ok := labels["cluster-role.kubesphere.io/host"]
+				if ok {
+					continue
+				}
+			}
 			target = append(target, cluster.Name)
 		}
 		return target, nil
