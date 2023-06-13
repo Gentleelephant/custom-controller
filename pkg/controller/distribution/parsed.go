@@ -29,13 +29,11 @@ type overrideOption struct {
 }
 
 type ParsedOverrideRules struct {
-	RuleName string `json:"ruleName"`
+	Id string `json:"id"`
 
 	Clusters []string `json:"clusters"`
 
 	OverrideOptions []overrideOption `json:"overrideOptions"`
-
-	ResourceDistribution *v1.ResourceDistribution `json:"resourceDistribution"`
 }
 
 type ParsedOverrideRulesStore struct {
@@ -47,11 +45,11 @@ func (d *ParsedOverrideRulesStore) Store(namespaceKey string, object ParsedOverr
 	m, ok := d.store[namespaceKey]
 	if !ok {
 		value := make(map[string]ParsedOverrideRules)
-		value[object.RuleName] = object
+		value[object.Id] = object
 		d.store[namespaceKey] = value
 		return
 	}
-	m[object.RuleName] = object
+	m[object.Id] = object
 	d.store[namespaceKey] = m
 }
 
@@ -89,10 +87,9 @@ func ParseResourceDistribution(ctx context.Context, client ctrlclient.Client, rd
 	}
 	if overrideRules == nil || len(overrideRules) == 0 {
 		temp := ParsedOverrideRules{
-			Clusters:             clusters,
-			OverrideOptions:      nil,
-			RuleName:             rd.Name,
-			ResourceDistribution: rd,
+			Clusters:        clusters,
+			OverrideOptions: nil,
+			Id:              rd.Name,
 		}
 		m[rd.Name] = temp
 	}
@@ -128,10 +125,9 @@ func ParseResourceDistribution(ctx context.Context, client ctrlclient.Client, rd
 			}
 		}
 		parseRule := ParsedOverrideRules{
-			Clusters:             intersection,
-			OverrideOptions:      overrideOptions,
-			RuleName:             item.Id,
-			ResourceDistribution: rd,
+			Clusters:        intersection,
+			OverrideOptions: overrideOptions,
+			Id:              item.Id,
 		}
 		m[item.Id] = parseRule
 		usedCluster = append(usedCluster, intersection...)
@@ -143,10 +139,9 @@ func ParseResourceDistribution(ctx context.Context, client ctrlclient.Client, rd
 	residue := minusSet.Values()
 	if len(residue) > 0 {
 		temp := ParsedOverrideRules{
-			Clusters:             residue,
-			OverrideOptions:      nil,
-			RuleName:             rd.Name,
-			ResourceDistribution: rd,
+			Clusters:        residue,
+			OverrideOptions: nil,
+			Id:              rd.Name,
 		}
 		m[rd.Name] = temp
 	}
@@ -163,6 +158,14 @@ func parseRdClusterName(ctx context.Context, client ctrlclient.Client, rd *v1.Re
 			return nil, err
 		}
 		for _, cluster := range clusterList.Items {
+			// 如果是主集群，不需要同步
+			labels := cluster.Labels
+			if labels != nil {
+				_, ok := labels[constant.HostCluster]
+				if ok {
+					continue
+				}
+			}
 			target = append(target, cluster.Name)
 		}
 		return target, nil

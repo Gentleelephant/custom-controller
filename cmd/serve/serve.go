@@ -6,7 +6,6 @@ import (
 	clientset "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned"
 	informers "github.com/Gentleelephant/custom-controller/pkg/client/informers/externalversions"
 	"github.com/Gentleelephant/custom-controller/pkg/controller/distribution"
-	webhook2 "github.com/Gentleelephant/custom-controller/pkg/webhook"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/discovery"
@@ -20,7 +19,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"time"
 )
 
@@ -102,11 +100,11 @@ func Start() {
 	}
 
 	// Add Webhook
-	mgr.GetWebhookServer().Register("/mutate-v1-rd", &webhook.Admission{
-		Handler: &webhook2.ResourceDistributionWebhook{
-			Client: mgr.GetClient(),
-		},
-	})
+	//mgr.GetWebhookServer().Register("/mutate-v1-rd", &webhook.Admission{
+	//	Handler: &webhook2.ResourceDistributionWebhook{
+	//		Client: mgr.GetClient(),
+	//	},
+	//})
 
 	//err = mgr.Add(workloadController)
 	//if err != nil {

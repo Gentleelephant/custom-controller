@@ -22,7 +22,7 @@ spec:
         - path: /spec/replicas
           operator: replace
           value: 2
-      ruleName: rule1
+      id: rule1
     - targetCluster:
         clusterNames:
           - member2
@@ -31,4 +31,4 @@ spec:
           - path: /spec/replicas
             operator: replace
             value: 3
-      ruleName: rule2
+      id: rule2

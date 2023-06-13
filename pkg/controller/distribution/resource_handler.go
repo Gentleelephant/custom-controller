@@ -3,19 +3,27 @@ package distribution
 import (
 	"github.com/Gentleelephant/custom-controller/pkg/utils"
 	"github.com/Gentleelephant/custom-controller/pkg/utils/keys"
-	"github.com/duke-git/lancet/v2/maputil"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/klog/v2"
 )
 
 type BindObject struct {
 
 	// 触发同步的ResourceDistribution
-	RdWidekey []keys.ClusterWideKey
+	RdNamespaceKey []string
 
 	// 被同步对象
 	Obj interface{}
+}
+
+type DeleteObject struct {
+	// 触发同步的ResourceDistribution
+	RdNamespaceKey []string
+
+	// 被同步对象
+	Obj interface{}
+
+	// 如果workload是由该rule创建的，那么需要删除该rule，并删除对应workload
+	RuleNames []string
 }
 
 type EventHandler struct {
@@ -28,9 +36,9 @@ func (c *EventHandler) OnAdd(obj interface{}) {
 	if !b {
 		return
 	}
-	object := BindObject{
-		RdWidekey: wideKeys,
-		Obj:       obj,
+	object := &BindObject{
+		RdNamespaceKey: wideKeys,
+		Obj:            obj,
 	}
 
 	// 将对象放入channel
@@ -61,9 +69,11 @@ func (c *EventHandler) OnUpdate(oldObj, newObj interface{}) {
 		return
 	}
 
-	object := BindObject{
-		RdWidekey: wideKeys,
-		Obj:       newObj,
+	klog.Info("关联资源更新...")
+
+	object := &BindObject{
+		RdNamespaceKey: wideKeys,
+		Obj:            newObj,
 	}
 
 	// 将对象放入channel
@@ -78,21 +88,16 @@ func (c *EventHandler) OnDelete(obj interface{}) {
 		return
 	}
 
-	for _, key := range wideKeys {
-		toString := keys.WideKeyToString(key)
-		klog.Info("删除资源对应的Rules:", toString)
-		rules, exist := c.controller.RuleStore.Get(toString)
-		if exist {
-			ruleNames := maputil.Keys(rules)
-			for _, ruleName := range ruleNames {
-				c.controller.del <- ruleName
-			}
-		}
+	object := &DeleteObject{
+		RdNamespaceKey: wideKeys,
+		Obj:            obj,
 	}
+
+	c.controller.del <- object
 
 }
 
-func (c *EventHandler) EventFilter(obj interface{}) ([]keys.ClusterWideKey, bool) {
+func (c *EventHandler) EventFilter(obj interface{}) ([]string, bool) {
 	key, err := keys.ClusterWideKeyFunc(obj)
 	if err != nil {
 		return nil, false
@@ -100,28 +105,40 @@ func (c *EventHandler) EventFilter(obj interface{}) ([]keys.ClusterWideKey, bool
 	if keys.IsReservedNamespace(key.Namespace) {
 		return nil, false
 	}
-	if unstructObj, ok := obj.(*unstructured.Unstructured); ok {
-		switch unstructObj.GroupVersionKind() {
-		case corev1.SchemeGroupVersion.WithKind("Secret"):
-			secretType, found, _ := unstructured.NestedString(unstructObj.Object, "type")
-			if found && secretType == string(corev1.SecretTypeServiceAccountToken) {
-				return nil, false
-			}
-		}
-	}
+	//if unstructObj, ok := obj.(*unstructured.Unstructured); ok {
+	//	switch unstructObj.GroupVersionKind() {
+	//	case corev1.SchemeGroupVersion.WithKind("Secret"):
+	//		secretType, found, _ := unstructured.NestedString(unstructObj.Object, "type")
+	//		if found && secretType == string(corev1.SecretTypeServiceAccountToken) {
+	//			return nil, false
+	//		}
+	//	}
+	//}
 
 	templates := c.controller.Store.GetAllTemplates()
 
-	var namespaceKeys []keys.ClusterWideKey
+	var namespaceKeys []string
 	var flag bool
 
 	for _, template := range templates {
-		if keys.PrefixMatch(key, template) {
-			klog.Info("前缀匹配成功：", key, template)
-			namespaceKeys = append(namespaceKeys, template)
+		// 如果模板中的Name不为空，则需要全等匹配
+		if template.Name != "" {
+			if template == key {
+				distributions := c.controller.Store.GetDistributions(template)
+				namespaceKeys = append(namespaceKeys, distributions...)
+				flag = true
+			}
+			continue
+		}
+		// 如果模板中的Name为空，则需要其他字段匹配
+		if template.Group == key.Group && template.Version == key.Version && template.Kind == key.Kind && template.Namespace == key.Namespace {
+			// 匹配上
+			klog.Info("其他字段匹配成功：", key, template)
+			// TODO : 根据模板找到对应RD
+			distributions := c.controller.Store.GetDistributions(template)
+			namespaceKeys = append(namespaceKeys, distributions...)
 			flag = true
 		}
 	}
-
 	return namespaceKeys, flag
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/Gentleelephant/custom-controller/pkg/apis/cluster/v1alpha1"
+	"github.com/Gentleelephant/custom-controller/pkg/apis/distribution"
 	v1 "github.com/Gentleelephant/custom-controller/pkg/apis/distribution/v1"
 	clientset "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned"
 	clusterinformers "github.com/Gentleelephant/custom-controller/pkg/client/informers/externalversions/cluster/v1alpha1"
@@ -14,9 +15,11 @@ import (
 	"github.com/Gentleelephant/custom-controller/pkg/utils"
 	"github.com/Gentleelephant/custom-controller/pkg/utils/genericmanager"
 	"github.com/Gentleelephant/custom-controller/pkg/utils/keys"
+	"github.com/duke-git/lancet/v2/cryptor"
 	"github.com/duke-git/lancet/v2/maputil"
 	"github.com/duke-git/lancet/v2/slice"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -33,6 +36,7 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 	"reflect"
+	"strings"
 	"sync"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -83,8 +87,8 @@ type DistributionController struct {
 	recorder         record.EventRecorder
 	informersManager *genericmanager.InformerManager
 	RuleStore        *ParsedOverrideRulesStore
-	del              chan string
-	cre              chan BindObject
+	del              chan *DeleteObject
+	cre              chan *BindObject
 	stopCh           <-chan struct{}
 	mu               sync.RWMutex
 }
@@ -126,8 +130,8 @@ func NewDistributionController(ctx context.Context,
 	controller.Store = NewKeyStore()
 	controller.RuleStore = NewParsedOverrideRulesStore()
 	controller.informersManager = genericmanager.NewInformerManager(dynamicClient, 0, ctx.Done())
-	controller.del = make(chan string, ChannelSize)
-	controller.cre = make(chan BindObject, ChannelSize)
+	controller.del = make(chan *DeleteObject, ChannelSize)
+	controller.cre = make(chan *BindObject, ChannelSize)
 
 	logger.Info("Setting up ResourceDistribution event handlers")
 	// Set up an event handler for when ResourceDistribution resources change
@@ -148,6 +152,16 @@ func NewDistributionController(ctx context.Context,
 	//TODO: 在这里需要找到该Cluster被哪些ResourceDistribution所引用，然后将找到的ResourceDistribution入队列
 	cinformer.Informer().AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
+			// 如果是主集群，跳过
+			clsuter, ok := obj.(*v1alpha1.Cluster)
+			if !ok {
+				klog.Error("Cluster add error, obj is not *v1alpha1.Cluster")
+			}
+			labels := clsuter.Labels
+			_, ok = labels[constant.HostCluster]
+			if ok {
+				return
+			}
 			klog.Info("Cluster add")
 			// TODO:cluster添加需要通知到ResourceDistribution
 			// 直接暴力一点，将所有的ResourceDistribution都入队列！
@@ -158,6 +172,92 @@ func NewDistributionController(ctx context.Context,
 		},
 	})
 	return controller
+}
+
+func (c *DistributionController) applyRules() {
+
+	for {
+		select {
+		case obj := <-c.cre:
+			// TODO: 需要将对应的关联资源存储起来，后面如果rd有变化，这部分资源需要重新入队列
+			c.createOrUpdateWorkload(obj)
+		}
+	}
+}
+
+func (c *DistributionController) createOrUpdateWorkload(obj *BindObject) {
+
+	key, err := keys.ClusterWideKeyFunc(obj.Obj)
+	if err != nil {
+		klog.Error("create error:", err)
+	}
+
+	unstruct, err := utils.ToUnstructured(obj.Obj)
+	if err != nil {
+		klog.Error("transform error:", err)
+		return
+	}
+
+	labels := unstruct.GetLabels()
+	if labels == nil {
+		labels = make(map[string]string)
+		labels[constant.SyncObject] = "true"
+	}
+	labels[constant.SyncObject] = "true"
+	unstruct.SetLabels(labels)
+
+	for _, s := range obj.RdNamespaceKey {
+		rules, b := c.RuleStore.Get(s)
+		if !b {
+			continue
+		}
+		for _, v := range rules {
+			deepcopy := unstruct.DeepCopy()
+			// 应用规则
+			err := ApplyJSONPatchs(deepcopy, v.OverrideOptions)
+			if err != nil {
+				klog.Error("apply error:", err)
+				return
+			}
+			wname := createName(key, v.Id, s)
+			namespace, name, err := toolscache.SplitMetaNamespaceKey(s)
+			if err != nil {
+				klog.Error("create error:", err)
+				continue
+			}
+			rd, err := c.rdLister.ResourceDistributions(namespace).Get(name)
+			if err != nil {
+				klog.Error("get rd error:", err)
+				continue
+			}
+			work := c.creWork(wname, v.Id, v.Clusters, rd)
+			json, err := deepcopy.MarshalJSON()
+			if err != nil {
+				klog.Error("marshal error:", err)
+				continue
+			}
+			work.Spec.Manifest.Raw = json
+			temp := &v1.Workload{}
+			err = c.Client.Get(context.Background(), client.ObjectKey{Namespace: namespace, Name: work.Name}, temp)
+			if err != nil {
+				if errors.IsNotFound(err) {
+					err = c.Client.Create(context.Background(), work)
+					if err != nil {
+						klog.Error("create error:", err)
+					}
+				}
+			} else {
+				// 更新
+				klog.Info("update workload")
+				work.SetResourceVersion(temp.GetResourceVersion())
+				err = c.Client.Update(context.Background(), work)
+				if err != nil {
+					klog.Error("update error:", err)
+				}
+			}
+		}
+	}
+
 }
 
 func NamespaceKeyFunc(obj interface{}) (string, error) {
@@ -205,6 +305,9 @@ func (c *DistributionController) Run(ctx context.Context, workers int) error {
 		go wait.UntilWithContext(ctx, c.runWorker, time.Second)
 	}
 	logger.Info("Started workers")
+
+	// 启动applyRules
+	go c.applyRules()
 
 	<-ctx.Done()
 	logger.Info("Shutting down workers")
@@ -362,6 +465,7 @@ func (c *DistributionController) eventAdd(ctx context.Context, object *EventObje
 
 func (c *DistributionController) eventUpdate(ctx context.Context, object *EventObject) error {
 	// 如果是更新操作
+	// TODO: 是否应该把同步的资源给记录下来，如果对应的RD更新了，对应的资源需要被重新入队列
 	b, b1, b2 := changes(object.Old, object.New)
 
 	if b && b1 && b2 {
@@ -425,18 +529,18 @@ func (c *DistributionController) eventDelete(object *EventObject) error {
 	c.Store.RemoveRelationship(wideKey, namespaceKey)
 	c.RuleStore.DeleteAll(namespaceKey)
 	// 判断是否需要删除informer
-	key, err := findReferenceResource(&object.Old.Spec.ResourceSelector)
-	if err != nil {
-		return err
-	}
-	gvr, err := getGroupVersionResource(c.restMapper, key.GroupVersionKind())
-	if err != nil {
-		return err
-	}
-	numbers := c.informersManager.Numbers(gvr)
-	if numbers == 1 {
-		c.informersManager.Remove(gvr)
-	}
+	//key, err := findReferenceResource(&object.Old.Spec.ResourceSelector)
+	//if err != nil {
+	//	return err
+	//}
+	//gvr, err := getGroupVersionResource(c.restMapper, key.GroupVersionKind())
+	//if err != nil {
+	//	return err
+	//}
+	//numbers := c.informersManager.Numbers(gvr)
+	//if numbers == 1 {
+	//	c.informersManager.Remove(gvr)
+	//}
 	return nil
 }
 
@@ -517,9 +621,11 @@ func (c *DistributionController) comparedRules(ctx context.Context, rd *v1.Resou
 	// 找出存在oldRulesNames，但是不存在newRulesNames的规则，这些要删除
 	difference := slice.Difference(oldRulesNames, newRulesNames)
 
-	for _, ruleName := range difference {
-		c.del <- ruleName
+	object := &DeleteObject{
+		RuleNames: difference,
 	}
+
+	c.del <- object
 
 	return nil
 
@@ -535,9 +641,16 @@ func (c *DistributionController) removeRules(rd *v1.ResourceDistribution) error 
 	if !exist {
 		return nil
 	}
-	for _, rule := range rules {
-		c.del <- rule.RuleName
+	//for _, rule := range rules {
+	//	c.del <- rule.Id
+	//}
+	r := maputil.Keys(rules)
+
+	deleteObject := &DeleteObject{
+		RuleNames: r,
 	}
+
+	c.del <- deleteObject
 
 	c.RuleStore.DeleteAll(namespaceKey)
 
@@ -559,7 +672,7 @@ func (c *DistributionController) updateExternalResources(ctx context.Context, rd
 }
 
 func (c *DistributionController) deleteExternalResources(ctx context.Context, rd *v1.ResourceDistribution) error {
-	err := c.Client.DeleteAllOf(ctx, &v1.Workload{}, client.InNamespace(rd.Namespace), client.MatchingLabels{constant.ResourceDistributionPolicy: rd.Name})
+	err := c.Client.DeleteAllOf(ctx, &v1.Workload{}, client.InNamespace(rd.Namespace), client.MatchingLabels{constant.ResourceDistribution: rd.Name})
 	if err != nil {
 		klog.Error("delete workload error:", err)
 		return err
@@ -626,6 +739,34 @@ func getGroupVersionResource(restMapper meta.RESTMapper, gvk schema.GroupVersion
 		return schema.GroupVersionResource{}, err
 	}
 	return restMapping.Resource, nil
+}
+
+func (c *DistributionController) creWork(name, ruleid string, clusters []string, rd *v1.ResourceDistribution) *v1.Workload {
+	workload := &v1.Workload{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "Work",
+			APIVersion: distribution.GroupName + "/v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: rd.Namespace,
+			Labels: map[string]string{
+				constant.SyncCluster:                strings.Join(clusters, ","), // 用于标记同步到哪些集群
+				constant.ResourceDistribution:       rd.Name,
+				constant.ResourceDistributionRuleId: ruleid,
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(rd, schema.GroupVersionKind{
+					Group:   "distribution.kubesphere.io",
+					Version: "v1",
+					Kind:    "ResourceDistribution",
+				}),
+			},
+		},
+		Spec:   v1.WorkloadSpec{},
+		Status: v1.WorkloadStatus{},
+	}
+	return workload
 }
 
 //func (c *DistributionController) createWorkV2(clusterNames []string, rd *v1.ResourceDistribution) map[string]v1.Workload {
@@ -728,14 +869,14 @@ func (c *DistributionController) notifyRD(obj interface{}) {
 
 // findResourceDistributionKey find the resource distribution key.
 func (c *DistributionController) findResourceDistributionByResourceKey(key keys.ClusterWideKey) ([]string, bool) {
-	res := c.Store.GetAllTemplates()
-	var result []string
-	for _, re := range res {
-		match := keys.PrefixMatch(key, re)
-		if match {
-			result = append(result, c.Store.GetDistributions(re)...)
-		}
-	}
+	//res := c.Store.GetAllTemplates()
+	//var result []string
+	//for _, re := range res {
+	//	match := keys.PrefixMatch(key, re)
+	//	if match {
+	//		result = append(result, c.Store.GetDistributions(re)...)
+	//	}
+	//}
 	return nil, false
 }
 
@@ -972,4 +1113,12 @@ func findReferenceResource(resourceSelector *v1.ResourceSelector) (keys.ClusterW
 		Namespace: resourceSelector.Namespace,
 	}
 	return key, nil
+}
+
+// 创建名字
+func createName(re keys.ClusterWideKey, ruleID, namespaceKey string) string {
+	toString := re.ToString()
+	str := fmt.Sprintf("%s-%s-%s", toString, ruleID, namespaceKey)
+	sha1 := cryptor.Sha1(str)
+	return fmt.Sprintf("workload-%s", sha1[0:10])
 }

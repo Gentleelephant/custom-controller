@@ -36,6 +36,10 @@ func (k ClusterWideKey) String() string {
 	return fmt.Sprintf("%s, kind=%s, %s", k.GroupVersion().String(), k.Kind, k.NamespaceKey())
 }
 
+func (k ClusterWideKey) ToString() string {
+	return fmt.Sprintf("%s/%s/%s/%s", k.Group, k.Version, k.Kind, k.NamespaceKey())
+}
+
 // NamespaceKey returns the traditional key of an object.
 func (k *ClusterWideKey) NamespaceKey() string {
 	if len(k.Namespace) > 0 {
@@ -135,8 +139,8 @@ func FederatedKeyFunc(cluster string, obj interface{}) (FederatedKey, error) {
 	return key, nil
 }
 
-// PrefixMatch k1是否具有k2的前缀
-func PrefixMatch(k1, prefix ClusterWideKey) bool {
+// NonNameMatch 比较除了name之外的所有字段是否相等
+func NonNameMatch(k1, prefix ClusterWideKey) bool {
 	s1 := WideKeyToString(k1)
 	s2 := WideKeyToString(prefix)
 	if strings.HasPrefix(s1, s2) {

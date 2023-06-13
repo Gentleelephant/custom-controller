@@ -3,13 +3,19 @@ package constant
 const (
 	ResourceDistributionId = "distribution.kubesphere.io/id"
 
-	ResourceDistributionPolicy = "distribution.kubesphere.io/policy"
+	ResourceDistribution = "distribution.kubesphere.io/policy"
+
+	ResourceDistributionRuleId = "distribution.kubesphere.io/ruleid"
+
+	SyncObject = "distribution.kubesphere.io/sync-object"
 
 	SyncCluster = "distribution.kubesphere.io/cluster"
 
 	Finalizer = "distribution.kubesphere.io/finalizer"
 
 	ResourceDistributionAnnotation = "distribution.kubesphere.io/rd"
+
+	HostCluster = "cluster-role.kubesphere.io/host"
 
 	WorkloadCLusterAnnotation = "distribution.kubesphere.io/workload-cluster"
 
