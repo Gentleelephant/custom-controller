@@ -875,6 +875,7 @@ func (c *DistributionController) EventFilter(obj interface{}) bool {
 	if exist {
 		return true
 	}
+
 	return false
 }
 
