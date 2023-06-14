@@ -3,6 +3,7 @@ package distribution
 import (
 	"github.com/Gentleelephant/custom-controller/pkg/utils"
 	"github.com/Gentleelephant/custom-controller/pkg/utils/keys"
+	"github.com/duke-git/lancet/v2/maputil"
 	"k8s.io/klog/v2"
 )
 
@@ -16,18 +17,22 @@ type BindObject struct {
 }
 
 type DeleteObject struct {
-	// 触发同步的ResourceDistribution
 	RdNamespaceKey []string
 
-	// 被同步对象
-	Obj interface{}
+	// 需要删除的Workload
+	WorkloadName []string
 
-	// 如果workload是由该rule创建的，那么需要删除该rule，并删除对应workload
-	RuleNames []string
+	RuleId []string
 }
 
 type EventHandler struct {
 	controller *DistributionController
+}
+
+func NewEventHandler(c *DistributionController) *EventHandler {
+	return &EventHandler{
+		controller: c,
+	}
 }
 
 func (c *EventHandler) OnAdd(obj interface{}) {
@@ -83,14 +88,34 @@ func (c *EventHandler) OnUpdate(oldObj, newObj interface{}) {
 
 func (c *EventHandler) OnDelete(obj interface{}) {
 
-	wideKeys, b := c.EventFilter(obj)
+	namespaceKeys, b := c.EventFilter(obj)
 	if !b {
 		return
 	}
 
+	clusterWideKey, err := keys.ClusterWideKeyFunc(obj)
+	if err != nil {
+		klog.Errorf("Failed to get cluster wide key of object (kind=%s, %s/%s), error: %v", obj, err)
+		return
+	}
+
+	var deleteWorkload []string
+
+	for _, namespaceKey := range namespaceKeys {
+		rules, exist := c.controller.RuleStore.Get(namespaceKey)
+		if exist {
+			ids := maputil.Keys(rules)
+			for _, i := range ids {
+				workloadName := getWorkloadName(&clusterWideKey, i, namespaceKey)
+				deleteWorkload = append(deleteWorkload, workloadName)
+			}
+		}
+	}
+
 	object := &DeleteObject{
-		RdNamespaceKey: wideKeys,
-		Obj:            obj,
+		RdNamespaceKey: nil,
+		WorkloadName:   deleteWorkload,
+		RuleId:         nil,
 	}
 
 	c.controller.del <- object
@@ -105,15 +130,6 @@ func (c *EventHandler) EventFilter(obj interface{}) ([]string, bool) {
 	if keys.IsReservedNamespace(key.Namespace) {
 		return nil, false
 	}
-	//if unstructObj, ok := obj.(*unstructured.Unstructured); ok {
-	//	switch unstructObj.GroupVersionKind() {
-	//	case corev1.SchemeGroupVersion.WithKind("Secret"):
-	//		secretType, found, _ := unstructured.NestedString(unstructObj.Object, "type")
-	//		if found && secretType == string(corev1.SecretTypeServiceAccountToken) {
-	//			return nil, false
-	//		}
-	//	}
-	//}
 
 	templates := c.controller.Store.GetAllTemplates()
 

@@ -82,14 +82,14 @@ func Start() {
 		informerFactory.Cluster().V1alpha1().Clusters(),
 	)
 
-	//workloadController := distribution.NewController(ctx,
-	//	mgr.GetClient(),
-	//	kubeClient,
-	//	clientsets,
-	//	mgr.GetScheme(),
-	//	informerFactory.Cluster().V1alpha1().Clusters(),
-	//	mgr.GetRESTMapper(),
-	//	informerFactory.Distribution().V1().Workloads())
+	workloadController := distribution.NewController(ctx,
+		mgr.GetClient(),
+		kubeClient,
+		clientsets,
+		mgr.GetScheme(),
+		informerFactory.Cluster().V1alpha1().Clusters(),
+		mgr.GetRESTMapper(),
+		informerFactory.Distribution().V1().Workloads())
 
 	informerFactory.Start(ctx.Done())
 
@@ -106,11 +106,11 @@ func Start() {
 	//	},
 	//})
 
-	//err = mgr.Add(workloadController)
-	//if err != nil {
-	//	log.Fatalln(err)
-	//	return
-	//}
+	err = mgr.Add(workloadController)
+	if err != nil {
+		log.Fatalln(err)
+		return
+	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		os.Exit(1)

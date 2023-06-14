@@ -7,17 +7,15 @@ const (
 
 	ResourceDistributionRuleId = "distribution.kubesphere.io/ruleid"
 
-	SyncObject = "distribution.kubesphere.io/sync-object"
+	DistributionManaged = "distribution.kubesphere.io/managed"
 
 	SyncCluster = "distribution.kubesphere.io/cluster"
 
+	WorkloadName = "distribution.kubesphere.io/workload"
+
 	Finalizer = "distribution.kubesphere.io/finalizer"
 
-	ResourceDistributionAnnotation = "distribution.kubesphere.io/rd"
-
 	HostCluster = "cluster-role.kubesphere.io/host"
-
-	WorkloadCLusterAnnotation = "distribution.kubesphere.io/workload-cluster"
 
 	// SuccessSynced is used as part of the Event 'reason' when a Foo is synced
 	SuccessSynced = "Synced"

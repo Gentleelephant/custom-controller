@@ -37,7 +37,7 @@ type ParsedOverrideRules struct {
 }
 
 type ParsedOverrideRulesStore struct {
-	// 存储rd->ParsedOverrideRules
+	// 存储rd->ruleid->ParsedOverrideRules
 	store map[string]map[string]ParsedOverrideRules
 }
 
@@ -67,7 +67,6 @@ func (d *ParsedOverrideRulesStore) Delete(namespaceKey, name string) {
 }
 
 func (d *ParsedOverrideRulesStore) DeleteAll(namespaceKey string) {
-	// 是否需要提供回调，删除DistributionObject的同时对应的workload也要删除
 	delete(d.store, namespaceKey)
 }
 
