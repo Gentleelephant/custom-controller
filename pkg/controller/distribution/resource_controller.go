@@ -53,6 +53,8 @@ const (
 
 	ControllerName = "distribution-controller"
 
+	DistributionManaged = "distribution.kubesphere.io/managed"
+
 	KubernetesReservedNSPrefix = "kube-"
 
 	Finalizer = "distribution.kubesphere.io/finalizer"
@@ -489,6 +491,13 @@ func (c *DistributionController) generateWorks(ctx context.Context, policy *v1.R
 				klog.Error("apply json patch error:", err)
 				return nil, err
 			}
+
+			labels := deepCopyObj.GetLabels()
+			if labels == nil {
+				labels = make(map[string]string)
+			}
+			labels[DistributionManaged] = "true"
+			deepCopyObj.SetLabels(labels)
 			arrObj = append(arrObj, *deepCopyObj)
 		}
 		if item.TargetCluster == nil {

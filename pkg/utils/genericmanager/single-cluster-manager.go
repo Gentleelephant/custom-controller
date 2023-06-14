@@ -2,6 +2,8 @@ package genericmanager
 
 import (
 	"context"
+	"fmt"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sync"
 	"time"
 
@@ -60,8 +62,11 @@ type SingleClusterInformerManager interface {
 // defaultResync with value '0' means no re-sync.
 func NewSingleClusterInformerManager(client dynamic.Interface, defaultResync time.Duration, parentCh <-chan struct{}) SingleClusterInformerManager {
 	ctx, cancel := utils.ContextForChannel(parentCh)
+	optionsFunc := dynamicinformer.TweakListOptionsFunc(func(options *metav1.ListOptions) {
+		options.LabelSelector = fmt.Sprintf("%s=%s", "distribution.kubesphere.io/managed", "true")
+	})
 	return &singleClusterInformerManagerImpl{
-		informerFactory: dynamicinformer.NewDynamicSharedInformerFactory(client, defaultResync),
+		informerFactory: dynamicinformer.NewFilteredDynamicSharedInformerFactory(client, defaultResync, "", optionsFunc),
 		handlers:        make(map[schema.GroupVersionResource][]cache.ResourceEventHandler),
 		syncedInformers: make(map[schema.GroupVersionResource]struct{}),
 		ctx:             ctx,
