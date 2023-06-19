@@ -28,7 +28,7 @@ func (d DistributionStore) StoreResourcePointToDistribution(key, value string) {
 	}
 }
 
-// StoreDistributionPointToResource policy1 -> apps/v1/namespace/deployments/nginx
+// StoreDistributionPointToResource policy1 -> apps/v1alpha1/namespace/deployments/nginx
 func (d DistributionStore) StoreDistributionPointToResource(key, value string) {
 	d.store.Set(key, value, kvcache.NoExpiration)
 }
@@ -46,7 +46,7 @@ func (d DistributionStore) GetResourceByDistribution(key string) (string, bool) 
 	return s, true
 }
 
-// GetDistributionsByResource apps/v1/namespace/deployments/nginx  -> policy1,policy2,policy3
+// GetDistributionsByResource apps/v1alpha1/namespace/deployments/nginx  -> policy1,policy2,policy3
 func (d DistributionStore) GetDistributionsByResource(key string) []string {
 	result, exist := d.store.Get(key)
 	if !exist {
@@ -73,7 +73,7 @@ func (d DistributionStore) IsExistDistributionByResource(key string) bool {
 }
 
 // RemoveDistributionByResource 根据资源找到对应的分发策略并删除
-// apps/v1/namespace/deployments/nginx  -> policy1,policy2,policy3
+// apps/v1alpha1/namespace/deployments/nginx  -> policy1,policy2,policy3
 // 删除 policy1
 func (d DistributionStore) RemoveDistributionByResource(key, value string) {
 	result, exist := d.store.Get(key)
@@ -111,7 +111,7 @@ func (d DistributionStore) GetAllResources() []string {
 }
 
 // RemoveResourceByDistribution 根据分发策略找到对应的资源并删除
-// policy1 -> apps/v1/namespace/deployments/nginx
+// policy1 -> apps/v1alpha1/namespace/deployments/nginx
 func (d DistributionStore) RemoveResourceByDistribution(key string) {
 	d.store.Delete(key)
 }
@@ -126,8 +126,10 @@ func NewDistributionStore() DistributionStore {
 type KeyStore struct {
 	mu sync.Mutex
 
+	// Group,Version,Kind,Namespace,Name -> namespace/my-policy、namespace/my-policy2
 	templateToDistribution map[keys.ClusterWideKey]map[string]struct{}
 
+	// namespace/my-policy -> Group,Version,Kind,Namespace,Name
 	distributionToTemplate map[string]keys.ClusterWideKey
 }
 

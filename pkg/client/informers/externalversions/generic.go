@@ -22,7 +22,7 @@ import (
 	"fmt"
 
 	v1alpha1 "github.com/Gentleelephant/custom-controller/pkg/apis/cluster/v1alpha1"
-	v1 "github.com/Gentleelephant/custom-controller/pkg/apis/distribution/v1"
+	distributionv1alpha1 "github.com/Gentleelephant/custom-controller/pkg/apis/distribution/v1alpha1"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	cache "k8s.io/client-go/tools/cache"
 )
@@ -57,11 +57,11 @@ func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource
 	case v1alpha1.SchemeGroupVersion.WithResource("clusters"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Cluster().V1alpha1().Clusters().Informer()}, nil
 
-		// Group=distribution.kubesphere.io, Version=v1
-	case v1.SchemeGroupVersion.WithResource("resourcedistributions"):
-		return &genericInformer{resource: resource.GroupResource(), informer: f.Distribution().V1().ResourceDistributions().Informer()}, nil
-	case v1.SchemeGroupVersion.WithResource("workloads"):
-		return &genericInformer{resource: resource.GroupResource(), informer: f.Distribution().V1().Workloads().Informer()}, nil
+		// Group=distribution.kubesphere.io, Version=v1alpha1
+	case distributionv1alpha1.SchemeGroupVersion.WithResource("resourcedistributions"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Distribution().V1alpha1().ResourceDistributions().Informer()}, nil
+	case distributionv1alpha1.SchemeGroupVersion.WithResource("workloads"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Distribution().V1alpha1().Workloads().Informer()}, nil
 
 	}
 

@@ -98,9 +98,9 @@ function git_grep() {
 function codegen::join() { local IFS="$1"; shift; echo "$*"; }
 
 # enumerate group versions
-ALL_FQ_APIS=() # e.g. k8s.io/kubernetes/pkg/apis/apps k8s.io/api/apps/v1
-EXT_FQ_APIS=() # e.g. k8s.io/api/apps/v1
-GROUP_VERSIONS=() # e.g. apps/v1
+ALL_FQ_APIS=() # e.g. k8s.io/kubernetes/pkg/apis/apps k8s.io/api/apps/v1alpha1
+EXT_FQ_APIS=() # e.g. k8s.io/api/apps/v1alpha1
+GROUP_VERSIONS=() # e.g. apps/v1alpha1
 for GVs in ${GROUPS_WITH_VERSIONS}; do
   IFS=: read -r G Vs <<<"${GVs}"
 

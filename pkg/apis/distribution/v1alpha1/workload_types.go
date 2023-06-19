@@ -1,4 +1,4 @@
-package v1
+package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -17,8 +17,10 @@ const (
 )
 
 // +genclient
+// +genclient:nonNamespaced
 // +kubebuilder:subresource:status
 // +kubebuilder:object:root=true
+// +kubebuilder:resource:scope=Cluster
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 type Workload struct {

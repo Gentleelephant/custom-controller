@@ -1,4 +1,4 @@
-package v1
+package v1alpha1
 
 import (
 	"github.com/duke-git/lancet/v2/random"

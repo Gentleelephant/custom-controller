@@ -8,7 +8,7 @@ func TestName(t *testing.T) {
 
 	rdKey := ClusterWideKey{
 		Group:     "apps",
-		Version:   "v1",
+		Version:   "v1alpha1",
 		Kind:      "Deployment",
 		Namespace: "default",
 		Name:      "",
@@ -17,21 +17,21 @@ func TestName(t *testing.T) {
 	tests := []ClusterWideKey{
 		{
 			Group:     "apps",
-			Version:   "v1",
+			Version:   "v1alpha1",
 			Kind:      "Deployment",
 			Namespace: "default",
 			Name:      "xxxx",
 		},
 		{
 			Group:     "apps",
-			Version:   "v1",
+			Version:   "v1alpha1",
 			Kind:      "Service",
 			Namespace: "default",
 			Name:      "sss",
 		},
 		{
 			Group:     "apps",
-			Version:   "v1",
+			Version:   "v1alpha1",
 			Kind:      "",
 			Namespace: "",
 			Name:      "",

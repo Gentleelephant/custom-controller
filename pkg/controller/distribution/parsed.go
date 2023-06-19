@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/Gentleelephant/custom-controller/pkg/apis/cluster/v1alpha1"
-	v1 "github.com/Gentleelephant/custom-controller/pkg/apis/distribution/v1"
+	v1 "github.com/Gentleelephant/custom-controller/pkg/apis/distribution/v1alpha1"
 	"github.com/Gentleelephant/custom-controller/pkg/constant"
 	"github.com/Gentleelephant/custom-controller/pkg/utils"
 	"github.com/duke-git/lancet/v2/cryptor"
@@ -20,6 +20,7 @@ import (
 	"k8s.io/klog/v2"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"strings"
+	"sync"
 )
 
 type overrideOption struct {
@@ -37,41 +38,54 @@ type ParsedOverrideRules struct {
 }
 
 type ParsedOverrideRulesStore struct {
+	mu sync.RWMutex
 	// 存储rd->ruleid->ParsedOverrideRules
 	store map[string]map[string]ParsedOverrideRules
 }
 
-func (d *ParsedOverrideRulesStore) Store(namespaceKey string, object ParsedOverrideRules) {
-	m, ok := d.store[namespaceKey]
+func (d *ParsedOverrideRulesStore) Store(name string, object ParsedOverrideRules) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	m, ok := d.store[name]
 	if !ok {
 		value := make(map[string]ParsedOverrideRules)
 		value[object.Id] = object
-		d.store[namespaceKey] = value
+		d.store[name] = value
 		return
 	}
 	m[object.Id] = object
-	d.store[namespaceKey] = m
+	d.store[name] = m
 }
 
-func (d *ParsedOverrideRulesStore) StoreMap(namespaceKey string, m map[string]ParsedOverrideRules) {
-	d.store[namespaceKey] = m
+func (d *ParsedOverrideRulesStore) StoreMap(name string, m map[string]ParsedOverrideRules) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.store[name] = m
 }
 
-func (d *ParsedOverrideRulesStore) Get(namespaceKey string) (map[string]ParsedOverrideRules, bool) {
-	m, ok := d.store[namespaceKey]
+func (d *ParsedOverrideRulesStore) Get(name string) (map[string]ParsedOverrideRules, bool) {
+	m, ok := d.store[name]
 	return m, ok
 }
 
 func (d *ParsedOverrideRulesStore) Delete(namespaceKey, name string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	delete(d.store[namespaceKey], name)
 }
 
-func (d *ParsedOverrideRulesStore) DeleteAll(namespaceKey string) {
-	delete(d.store, namespaceKey)
+func (d *ParsedOverrideRulesStore) DeleteAll(name string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	delete(d.store, name)
 }
 
 func NewParsedOverrideRulesStore() *ParsedOverrideRulesStore {
 	return &ParsedOverrideRulesStore{
+		mu:    sync.RWMutex{},
 		store: make(map[string]map[string]ParsedOverrideRules),
 	}
 }

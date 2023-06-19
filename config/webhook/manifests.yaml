@@ -7,19 +7,19 @@ metadata:
   name: mutating-webhook-configuration
 webhooks:
 - admissionReviewVersions:
-  - v1
+  - v1alpha1
   clientConfig:
     service:
       name: webhook-service
       namespace: system
-      path: /mutate-v1-rd
+      path: /mutate-v1alpha1-rd
   failurePolicy: Fail
   name: mdistribution.kb.io
   rules:
   - apiGroups:
     - distribution.kubesphere.io
     apiVersions:
-    - v1
+    - v1alpha1
     operations:
     - CREATE
     - UPDATE

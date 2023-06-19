@@ -23,7 +23,7 @@ import (
 	"net/http"
 
 	clusterv1alpha1 "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned/typed/cluster/v1alpha1"
-	distributionv1 "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned/typed/distribution/v1"
+	distributionv1alpha1 "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned/typed/distribution/v1alpha1"
 	discovery "k8s.io/client-go/discovery"
 	rest "k8s.io/client-go/rest"
 	flowcontrol "k8s.io/client-go/util/flowcontrol"
@@ -32,14 +32,14 @@ import (
 type Interface interface {
 	Discovery() discovery.DiscoveryInterface
 	ClusterV1alpha1() clusterv1alpha1.ClusterV1alpha1Interface
-	DistributionV1() distributionv1.DistributionV1Interface
+	DistributionV1alpha1() distributionv1alpha1.DistributionV1alpha1Interface
 }
 
 // Clientset contains the clients for groups.
 type Clientset struct {
 	*discovery.DiscoveryClient
-	clusterV1alpha1 *clusterv1alpha1.ClusterV1alpha1Client
-	distributionV1  *distributionv1.DistributionV1Client
+	clusterV1alpha1      *clusterv1alpha1.ClusterV1alpha1Client
+	distributionV1alpha1 *distributionv1alpha1.DistributionV1alpha1Client
 }
 
 // ClusterV1alpha1 retrieves the ClusterV1alpha1Client
@@ -47,9 +47,9 @@ func (c *Clientset) ClusterV1alpha1() clusterv1alpha1.ClusterV1alpha1Interface {
 	return c.clusterV1alpha1
 }
 
-// DistributionV1 retrieves the DistributionV1Client
-func (c *Clientset) DistributionV1() distributionv1.DistributionV1Interface {
-	return c.distributionV1
+// DistributionV1alpha1 retrieves the DistributionV1alpha1Client
+func (c *Clientset) DistributionV1alpha1() distributionv1alpha1.DistributionV1alpha1Interface {
+	return c.distributionV1alpha1
 }
 
 // Discovery retrieves the DiscoveryClient
@@ -100,7 +100,7 @@ func NewForConfigAndClient(c *rest.Config, httpClient *http.Client) (*Clientset,
 	if err != nil {
 		return nil, err
 	}
-	cs.distributionV1, err = distributionv1.NewForConfigAndClient(&configShallowCopy, httpClient)
+	cs.distributionV1alpha1, err = distributionv1alpha1.NewForConfigAndClient(&configShallowCopy, httpClient)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +126,7 @@ func NewForConfigOrDie(c *rest.Config) *Clientset {
 func New(c rest.Interface) *Clientset {
 	var cs Clientset
 	cs.clusterV1alpha1 = clusterv1alpha1.New(c)
-	cs.distributionV1 = distributionv1.New(c)
+	cs.distributionV1alpha1 = distributionv1alpha1.New(c)
 
 	cs.DiscoveryClient = discovery.NewDiscoveryClient(c)
 	return &cs

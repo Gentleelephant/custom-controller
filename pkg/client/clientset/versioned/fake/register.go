@@ -20,7 +20,7 @@ package fake
 
 import (
 	clusterv1alpha1 "github.com/Gentleelephant/custom-controller/pkg/apis/cluster/v1alpha1"
-	distributionv1 "github.com/Gentleelephant/custom-controller/pkg/apis/distribution/v1"
+	distributionv1alpha1 "github.com/Gentleelephant/custom-controller/pkg/apis/distribution/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
@@ -33,7 +33,7 @@ var codecs = serializer.NewCodecFactory(scheme)
 
 var localSchemeBuilder = runtime.SchemeBuilder{
 	clusterv1alpha1.AddToScheme,
-	distributionv1.AddToScheme,
+	distributionv1alpha1.AddToScheme,
 }
 
 // AddToScheme adds all types of this clientset into the given scheme. This allows composition

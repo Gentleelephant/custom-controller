@@ -2,7 +2,7 @@ package distribution
 
 import (
 	"fmt"
-	v1 "github.com/Gentleelephant/custom-controller/pkg/apis/distribution/v1"
+	v1 "github.com/Gentleelephant/custom-controller/pkg/apis/distribution/v1alpha1"
 	"github.com/duke-git/lancet/v2/random"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -26,7 +26,7 @@ func TestChanged(t *testing.T) {
 	old := &v1.ResourceDistribution{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "ResourceDistribution",
-			APIVersion: "distribution.k8s.io/v1",
+			APIVersion: "distribution.k8s.io/v1alpha1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "old",
@@ -34,7 +34,7 @@ func TestChanged(t *testing.T) {
 		},
 		Spec: v1.ResourceDistributionSpec{
 			ResourceSelector: v1.ResourceSelector{
-				APIVersion: "apps/v1",
+				APIVersion: "apps/v1alpha1",
 				Kind:       "Deployment",
 				Namespace:  "default",
 				Name:       "nginx-deployment",
@@ -47,7 +47,7 @@ func TestChanged(t *testing.T) {
 			},
 			OverrideRules: []v1.RuleWithCluster{
 				{
-					RuleName:      "rule1",
+					Id:            "rule1",
 					TargetCluster: nil,
 					Overriders: v1.Overriders{
 						Plaintext: []v1.PlaintextOverrider{
@@ -68,7 +68,7 @@ func TestChanged(t *testing.T) {
 	new := &v1.ResourceDistribution{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "ResourceDistribution",
-			APIVersion: "distribution.k8s.io/v1",
+			APIVersion: "distribution.k8s.io/v1alpha1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "new",
@@ -76,7 +76,7 @@ func TestChanged(t *testing.T) {
 		},
 		Spec: v1.ResourceDistributionSpec{
 			ResourceSelector: v1.ResourceSelector{
-				APIVersion: "apps/v1",
+				APIVersion: "apps/v1alpha1",
 				Kind:       "Deployment",
 				Namespace:  "default",
 				Name:       "nginx-deployment",
@@ -89,7 +89,7 @@ func TestChanged(t *testing.T) {
 			},
 			OverrideRules: []v1.RuleWithCluster{
 				{
-					RuleName:      "rule1",
+					Id:            "rule1",
 					TargetCluster: nil,
 					Overriders: v1.Overriders{
 						Plaintext: []v1.PlaintextOverrider{

@@ -1,4 +1,4 @@
-apiVersion: distribution.kubesphere.io/v1
+apiVersion: distribution.kubesphere.io/v1alpha1
 kind: ResourceDistribution
 metadata:
   name: my-policy-test
@@ -23,12 +23,12 @@ spec:
           operator: replace
           value: 2
       id: rule1
-    - targetCluster:
-        clusterNames:
-          - member2
-      overriders:
-        plaintext:
-          - path: /spec/replicas
-            operator: replace
-            value: 3
-      id: rule2
+#    - targetCluster:
+#        clusterNames:
+#          - member2
+#      overriders:
+#        plaintext:
+#          - path: /spec/replicas
+#            operator: replace
+#            value: 3
+#      id: rule2

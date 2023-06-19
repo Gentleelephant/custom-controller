@@ -78,7 +78,7 @@ func Start() {
 		mgr.GetRESTMapper(),
 		dynamicClient,
 		*discoveryClient,
-		informerFactory.Distribution().V1().ResourceDistributions(),
+		informerFactory.Distribution().V1alpha1().ResourceDistributions(),
 		informerFactory.Cluster().V1alpha1().Clusters(),
 	)
 
@@ -89,7 +89,7 @@ func Start() {
 		mgr.GetScheme(),
 		informerFactory.Cluster().V1alpha1().Clusters(),
 		mgr.GetRESTMapper(),
-		informerFactory.Distribution().V1().Workloads())
+		informerFactory.Distribution().V1alpha1().Workloads())
 
 	informerFactory.Start(ctx.Done())
 
@@ -100,7 +100,7 @@ func Start() {
 	}
 
 	// Add Webhook
-	//mgr.GetWebhookServer().Register("/mutate-v1-rd", &webhook.Admission{
+	//mgr.GetWebhookServer().Register("/mutate-v1alpha1-rd", &webhook.Admission{
 	//	Handler: &webhook2.ResourceDistributionWebhook{
 	//		Client: mgr.GetClient(),
 	//	},

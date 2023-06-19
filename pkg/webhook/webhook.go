@@ -3,7 +3,7 @@ package webhook
 import (
 	"context"
 	"encoding/json"
-	v1 "github.com/Gentleelephant/custom-controller/pkg/apis/distribution/v1"
+	v1 "github.com/Gentleelephant/custom-controller/pkg/apis/distribution/v1alpha1"
 	"github.com/Gentleelephant/custom-controller/pkg/constant"
 	"github.com/duke-git/lancet/v2/random"
 	"k8s.io/klog/v2"
@@ -12,7 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
-//+kubebuilder:webhook:path=/mutate-v1-rd,mutating=true,failurePolicy=fail,sideEffects=None,groups=distribution.kubesphere.io,resources=resourcedistributions,verbs=create;update,versions=v1,name=mdistribution.kb.io,admissionReviewVersions=v1
+//+kubebuilder:webhook:path=/mutate-v1alpha1-rd,mutating=true,failurePolicy=fail,sideEffects=None,groups=distribution.kubesphere.io,resources=resourcedistributions,verbs=create;update,versions=v1alpha1,name=mdistribution.kb.io,admissionReviewVersions=v1alpha1
 
 type ResourceDistributionWebhook struct {
 	Client  client.Client

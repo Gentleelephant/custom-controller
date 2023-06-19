@@ -1,4 +1,4 @@
-package v1
+package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,8 +18,9 @@ type ResourceDistributionSpec struct {
 }
 
 // +genclient
+// +genclient:nonNamespaced
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:path=resourcedistributions,singular=resourcedistribution,scope=Namespaced,shortName=rd
+// +kubebuilder:resource:path=resourcedistributions,singular=resourcedistribution,scope=Cluster,shortName=rd
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 type ResourceDistribution struct {
@@ -56,6 +57,11 @@ type ResourceSelector struct {
 	// Default is empty, which means selecting all resources.
 	// +optional
 	Name string `json:"name,omitempty"`
+
+	// LabelSelector is a filter to select resources by labels.
+	// If non-nil and non-empty, only the resources match this filter will be selected.
+	// +optional
+	LabelSelector *metav1.LabelSelector `json:"labelSelector,omitempty"`
 }
 
 type Placement struct {

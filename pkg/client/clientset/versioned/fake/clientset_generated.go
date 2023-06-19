@@ -22,8 +22,8 @@ import (
 	clientset "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned"
 	clusterv1alpha1 "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned/typed/cluster/v1alpha1"
 	fakeclusterv1alpha1 "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned/typed/cluster/v1alpha1/fake"
-	distributionv1 "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned/typed/distribution/v1"
-	fakedistributionv1 "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned/typed/distribution/v1/fake"
+	distributionv1alpha1 "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned/typed/distribution/v1alpha1"
+	fakedistributionv1alpha1 "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned/typed/distribution/v1alpha1/fake"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/discovery"
@@ -86,7 +86,7 @@ func (c *Clientset) ClusterV1alpha1() clusterv1alpha1.ClusterV1alpha1Interface {
 	return &fakeclusterv1alpha1.FakeClusterV1alpha1{Fake: &c.Fake}
 }
 
-// DistributionV1 retrieves the DistributionV1Client
-func (c *Clientset) DistributionV1() distributionv1.DistributionV1Interface {
-	return &fakedistributionv1.FakeDistributionV1{Fake: &c.Fake}
+// DistributionV1alpha1 retrieves the DistributionV1alpha1Client
+func (c *Clientset) DistributionV1alpha1() distributionv1alpha1.DistributionV1alpha1Interface {
+	return &fakedistributionv1alpha1.FakeDistributionV1alpha1{Fake: &c.Fake}
 }

@@ -2,7 +2,7 @@ package utils
 
 import (
 	"fmt"
-	v1 "github.com/Gentleelephant/custom-controller/pkg/apis/distribution/v1"
+	v1 "github.com/Gentleelephant/custom-controller/pkg/apis/distribution/v1alpha1"
 	"strings"
 
 	coordinationv1 "k8s.io/api/coordination/v1"
@@ -22,7 +22,7 @@ type SkippedConfig struct {
 
 var corev1EventGVK = schema.GroupVersionKind{
 	Group:   "",
-	Version: "v1",
+	Version: "v1alpha1",
 	Kind:    "Event",
 }
 
@@ -70,11 +70,11 @@ func (r *SkippedConfig) parseSingle(token string) error {
 		r.Groups[token] = struct{}{}
 	// it should be the case "<group>/<version>"
 	case 1:
-		// for core group which don't have the group name, the case should be "v1/<kind>" or "v1/<kind>,<kind>..."
-		if strings.HasPrefix(token, "v1") {
+		// for core group which don't have the group name, the case should be "v1alpha1/<kind>" or "v1alpha1/<kind>,<kind>..."
+		if strings.HasPrefix(token, "v1alpha1") {
 			var kinds []string
 			for _, k := range strings.Split(token, ",") {
-				if strings.Contains(k, "/") { // "v1/<kind>"
+				if strings.Contains(k, "/") { // "v1alpha1/<kind>"
 					s := strings.Split(k, "/")
 					kinds = append(kinds, s[1])
 				} else {
@@ -83,7 +83,7 @@ func (r *SkippedConfig) parseSingle(token string) error {
 			}
 			for _, k := range kinds {
 				gvk := schema.GroupVersionKind{
-					Version: "v1",
+					Version: "v1alpha1",
 					Kind:    k,
 				}
 				r.GroupVersionKinds[gvk] = struct{}{}

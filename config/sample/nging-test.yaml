@@ -4,6 +4,8 @@ metadata:
   name: birdhk-nginx-deployment-test
   labels:
     app: nginxtest-test
+    rd: aaa
+    env: test
 spec:
   selector:
     matchLabels:

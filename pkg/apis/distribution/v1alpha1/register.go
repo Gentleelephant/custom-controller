@@ -1,4 +1,4 @@
-package v1
+package v1alpha1
 
 import (
 	"github.com/Gentleelephant/custom-controller/pkg/apis/distribution"
@@ -8,11 +8,11 @@ import (
 )
 
 // SchemeGroupVersion is group version used to register these objects
-var SchemeGroupVersion = schema.GroupVersion{Group: distribution.GroupName, Version: "v1"}
+var SchemeGroupVersion = schema.GroupVersion{Group: distribution.GroupName, Version: "v1alpha1"}
 
 var RDGVK = schema.GroupVersionKind{
 	Group:   distribution.GroupName,
-	Version: "v1",
+	Version: "v1alpha1",
 	Kind:    "ResourceDistribution",
 }
 

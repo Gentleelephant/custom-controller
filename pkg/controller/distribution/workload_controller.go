@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"github.com/Gentleelephant/custom-controller/pkg/apis/cluster/v1alpha1"
-	distributionv1 "github.com/Gentleelephant/custom-controller/pkg/apis/distribution/v1"
+	distributionv1 "github.com/Gentleelephant/custom-controller/pkg/apis/distribution/v1alpha1"
 	clientset "github.com/Gentleelephant/custom-controller/pkg/client/clientset/versioned"
 	clusterinformers "github.com/Gentleelephant/custom-controller/pkg/client/informers/externalversions/cluster/v1alpha1"
-	v1 "github.com/Gentleelephant/custom-controller/pkg/client/informers/externalversions/distribution/v1"
+	v1 "github.com/Gentleelephant/custom-controller/pkg/client/informers/externalversions/distribution/v1alpha1"
 	clusterlisters "github.com/Gentleelephant/custom-controller/pkg/client/listers/cluster/v1alpha1"
-	listers "github.com/Gentleelephant/custom-controller/pkg/client/listers/distribution/v1"
+	listers "github.com/Gentleelephant/custom-controller/pkg/client/listers/distribution/v1alpha1"
 	"github.com/Gentleelephant/custom-controller/pkg/constant"
 	"github.com/Gentleelephant/custom-controller/pkg/utils"
 	"github.com/Gentleelephant/custom-controller/pkg/utils/genericmanager"
@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/kubernetes"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/cache"
@@ -34,9 +35,10 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+
 	//"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -52,7 +54,7 @@ type WorkloadController struct {
 	Workqueue             workqueue.RateLimitingInterface
 	restMapper            meta.RESTMapper
 	recorder              record.EventRecorder
-	clients               sync.Map
+	clients               map[string]client.Client
 	workloadSynced        cache.InformerSynced
 	EventHandler          toolscache.ResourceEventHandler
 	SkippedResourceConfig *utils.SkippedConfig
@@ -71,10 +73,8 @@ func NewController(
 	cinformer clusterinformers.ClusterInformer,
 	restmapper meta.RESTMapper,
 	workloadInformer v1.WorkloadInformer) *WorkloadController {
-	logger := klog.FromContext(ctx)
 
 	// Create event broadcaster
-	logger.V(4).Info("Creating event broadcaster")
 
 	eventBroadcaster := record.NewBroadcaster()
 	eventBroadcaster.StartStructuredLogging(0)
@@ -92,7 +92,7 @@ func NewController(
 		Workqueue:             workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "Workload"),
 		recorder:              recorder,
 		scheme:                schema,
-		clients:               sync.Map{},
+		clients:               make(map[string]client.Client),
 		SkippedResourceConfig: utils.NewSkippedResourceConfig(),
 	}
 
@@ -122,7 +122,7 @@ func NewController(
 			if err != nil {
 				return
 			}
-			controller.clients.Store(cluster.Name, memberCLient)
+			controller.clients[cluster.Name] = memberCLient
 			go controller.discoverResources(ctx, 60*time.Second, cluster.Name)
 		},
 		DeleteFunc: func(obj interface{}) {
@@ -221,8 +221,8 @@ func (c *WorkloadController) gvrDisabled(gvr schema.GroupVersionResource) bool {
 
 func (c *WorkloadController) allowGvr(gvr schema.GroupVersionResource) bool {
 	testgvr := []schema.GroupVersionResource{
-		{Group: "apps", Version: "v1", Resource: "deployments"},
-		{Group: "", Version: "v1", Resource: "namespaces"},
+		{Group: "apps", Version: "v1alpha1", Resource: "deployments"},
+		{Group: "", Version: "v1alpha1", Resource: "namespaces"},
 	}
 	for _, g := range testgvr {
 		if g == gvr {
@@ -274,13 +274,13 @@ func (c *WorkloadController) Run(ctx context.Context, workers int) error {
 
 // runWorker is a long-running function that will continually call the
 // processNextWorkItem function in order to read and process a message on the
-// workqueue.
+// Workqueue.
 func (c *WorkloadController) runWorker(ctx context.Context) {
 	for c.processNextWorkItem(ctx) {
 	}
 }
 
-// processNextWorkItem will read a single work item off the workqueue and
+// processNextWorkItem will read a single work item off the Workqueue and
 // attempt to process it, by calling the syncHandler.
 func (c *WorkloadController) processNextWorkItem(ctx context.Context) bool {
 	obj, shutdown := c.Workqueue.Get()
@@ -341,16 +341,16 @@ func (c *WorkloadController) processNextWorkItem(ctx context.Context) bool {
 // with the current status of the resource.
 func (c *WorkloadController) syncHandler(ctx context.Context, key string) error {
 	// Convert the namespace/name string into a distinct namespace and name
-	//logger := klog.LoggerWithValues(klog.FromContext(ctx), "resourceName", key)
+	logger := klog.LoggerWithValues(klog.FromContext(ctx), "resourceName", key)
 
-	namespace, name, err := cache.SplitMetaNamespaceKey(key)
+	_, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("invalid resource key: %s", key))
 		return nil
 	}
 
 	// Get the workload resource with this namespace/name
-	workload, err := c.workloadLister.Workloads(namespace).Get(name)
+	workload, err := c.workloadLister.Get(name)
 	if err != nil {
 		// The Foo resource may no longer exist, in which case we stop
 		// processing.
@@ -361,34 +361,34 @@ func (c *WorkloadController) syncHandler(ctx context.Context, key string) error 
 		return err
 	}
 
-	//if workload.ObjectMeta.DeletionTimestamp.IsZero() {
-	//	if !controllerutil.ContainsFinalizer(workload, constant.Finalizer) {
-	//		if err = c.updateExternalResources(context.Background(), namespace, name); err != nil {
-	//			logger.Error(err, "updateExternalResources error")
-	//			return err
-	//		}
-	//		return nil
-	//	}
-	//} else {
-	//	// The object is being deleted
-	//	if controllerutil.ContainsFinalizer(workload, constant.Finalizer) {
-	//		// our finalizer is present, so lets handle any external dependency
-	//		// before deleting the policy
-	//		//go c.deleteExternalResources(ctx, workload)
-	//		if err = c.deleteExternalResources(ctx, workload); err != nil {
-	//			// if fail to delete the external dependency here, return with error
-	//			// so that it can be retried
-	//			return err
-	//		}
-	//		// remove our finalizer from the list and update it.
-	//		controllerutil.RemoveFinalizer(workload, constant.Finalizer)
-	//		_, err = c.workloadclientset.DistributionV1().Workloads(namespace).Update(ctx, workload, metav1.UpdateOptions{})
-	//		if err != nil {
-	//			return err
-	//		}
-	//		return nil
-	//	}
-	//}
+	if workload.ObjectMeta.DeletionTimestamp.IsZero() {
+		if !controllerutil.ContainsFinalizer(workload, constant.Finalizer) {
+			if err = c.updateExternalResources(context.Background(), name); err != nil {
+				logger.Error(err, "updateExternalResources error")
+				return err
+			}
+			return nil
+		}
+	} else {
+		// The object is being deleted
+		if controllerutil.ContainsFinalizer(workload, constant.Finalizer) {
+			// our finalizer is present, so lets handle any external dependency
+			// before deleting the policy
+			//go c.deleteExternalResources(ctx, workload)
+			if err = c.deleteExternalResources(ctx, workload); err != nil {
+				// if fail to delete the external dependency here, return with error
+				// so that it can be retried
+				return err
+			}
+			// remove our finalizer from the list and update it.
+			controllerutil.RemoveFinalizer(workload, constant.Finalizer)
+			_, err = c.workloadclientset.DistributionV1alpha1().Workloads().Update(ctx, workload, metav1.UpdateOptions{})
+			if err != nil {
+				return err
+			}
+			return nil
+		}
+	}
 
 	_, err = c.syncWork(ctx, workload)
 	if err != nil {
@@ -408,7 +408,7 @@ func (c *WorkloadController) syncHandler(ctx context.Context, key string) error 
 	//	return err
 	//}
 
-	//c.recorder.Event(workload, corev1.EventTypeNormal, SuccessSynced, "Workload Synced successfully")
+	//c.Recorder.Event(workload, corev1.EventTypeNormal, SuccessSynced, "Workload Synced successfully")
 	return nil
 }
 
@@ -422,18 +422,19 @@ func (c *WorkloadController) enqueue(obj interface{}) {
 	c.Workqueue.Add(key)
 }
 
-func (c *WorkloadController) updateExternalResources(ctx context.Context, namespace, name string) error {
+func (c *WorkloadController) updateExternalResources(ctx context.Context, name string) error {
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		workload, err := c.workloadclientset.DistributionV1().Workloads(namespace).Get(ctx, name, metav1.GetOptions{})
+		workload, err := c.workloadclientset.DistributionV1alpha1().Workloads().Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			klog.Error(err)
 			return err
 		}
 		workload.ObjectMeta.Finalizers = append(workload.ObjectMeta.Finalizers, constant.Finalizer)
-		_, err = c.workloadclientset.DistributionV1().Workloads(namespace).Update(ctx, workload, metav1.UpdateOptions{})
+		_, err = c.workloadclientset.DistributionV1alpha1().Workloads().Update(ctx, workload, metav1.UpdateOptions{})
 		return nil
 	})
 	if err != nil {
+		klog.Error("updateExternalResources error:", err)
 		return err
 	}
 	return nil
@@ -445,45 +446,50 @@ func (c *WorkloadController) deleteExternalResources(ctx context.Context, w *dis
 	//	klog.Error("-->get namespace key error:", err)
 	//	return err
 	//}
-	//c.Store.RemoveResourceWorkloadRelation(namespaceKey)
+	//c.KeyStore.RemoveResourceWorkloadRelation(namespaceKey)
 	err := c.removeResourceKey(w)
 	if err != nil {
 		return err
 	}
-	//memberClient, err := c.getClusterClient(ctx, w)
-	//if err != nil {
-	//	klog.Error(err)
-	//	return err
-	//}
-	//workload := unstructured.Unstructured{}
-	//manifests := w.Spec.Manifest
-	//for _, manifest := range manifests {
-	//	err = workload.UnmarshalJSON(manifest.Raw)
-	//	if err != nil {
-	//		klog.Error("unmarshal manifest error:", err)
-	//		return err
-	//	}
-	//	err = retry.RetryOnConflict(DefaultRetry, func() error {
-	//		err = memberClient.Delete(context.Background(), &workload)
-	//		if err != nil {
-	//			if errors.IsNotFound(err) {
-	//				return nil
-	//			}
-	//			klog.Error("delete resource error:", err)
-	//			return err
-	//		}
-	//		return nil
-	//	})
-	//	if err != nil {
-	//		return err
-	//	}
-	//}
+
+	labels := w.Labels
+	s, ok := labels[constant.SyncCluster]
+	if ok {
+		clientNames := strings.Split(s, ",")
+
+		workload := unstructured.Unstructured{}
+		manifest := w.Spec.Manifest
+		err = workload.UnmarshalJSON(manifest.Raw)
+		if err != nil {
+			klog.Error("unmarshal manifest error:", err)
+			return err
+		}
+
+		for _, clientName := range clientNames {
+			err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				memberClient := c.clients[clientName]
+				err = memberClient.Delete(context.Background(), &workload)
+				if err != nil {
+					if errors.IsNotFound(err) {
+						return nil
+					}
+					klog.Error("delete resource error:", err)
+					return err
+				}
+				return nil
+			})
+			if err != nil {
+				return err
+			}
+		}
+	}
+
 	return nil
 }
 
 func (c *WorkloadController) updateStatus(ctx context.Context, namespace, name string, status *distributionv1.WorkloadStatus) error {
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		workload, err := c.workloadclientset.DistributionV1().Workloads(namespace).Get(ctx, name, metav1.GetOptions{})
+		workload, err := c.workloadclientset.DistributionV1alpha1().Workloads().Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			if errors.IsNotFound(err) {
 				return nil
@@ -491,7 +497,7 @@ func (c *WorkloadController) updateStatus(ctx context.Context, namespace, name s
 			return err
 		}
 		workload.Status.ManifestStatuses = status.ManifestStatuses
-		_, err = c.workloadclientset.DistributionV1().Workloads(namespace).UpdateStatus(ctx, workload, metav1.UpdateOptions{})
+		_, err = c.workloadclientset.DistributionV1alpha1().Workloads().UpdateStatus(ctx, workload, metav1.UpdateOptions{})
 		if err != nil {
 			return err
 		}
@@ -556,7 +562,7 @@ func (c *WorkloadController) syncWork(ctx context.Context, work *distributionv1.
 
 	for _, name := range clustersNames {
 
-		value, ok := c.clients.Load(name)
+		value, ok := c.clients[name]
 		if !ok {
 			klog.Errorf("cluster %s is not exist", name)
 			continue
@@ -639,6 +645,7 @@ func (c *WorkloadController) syncWork(ctx context.Context, work *distributionv1.
 }
 
 func (c *WorkloadController) OnAdd(obj interface{}) {
+	klog.Info("workload add")
 	c.storeResourceKey(obj)
 	c.enqueue(obj)
 }
@@ -663,63 +670,13 @@ func (c *WorkloadController) OnUpdate(oldObj, newObj interface{}) {
 		return
 	}
 	klog.Info("workload update")
-	// 判断资源是否有增减，如果有减少，去要先将减少的资源删除
+	// TODO: 判断cluster是否减少，如果减少，删除member上的资源
 	//go c.removeUnusedResource(context.Background(), oldObj.(*distributionv1.Workload), newObj.(*distributionv1.Workload))
 	c.enqueue(newObj)
 }
 
-func (c *WorkloadController) removeUnusedResource(ctx context.Context, old, new *distributionv1.Workload) error {
-
-	_ = make(map[distributionv1.ResourceSelector]unstructured.Unstructured)
-	//for _, manifest := range new.Spec.Manifest {
-	//	var unstruct unstructured.Unstructured
-	//	err := unstruct.UnmarshalJSON(manifest.Raw)
-	//	if err != nil {
-	//		klog.Errorf("Failed to unmarshal unstruct, error is: %v", err)
-	//		return err
-	//	}
-	//	selector := distributionv1.ResourceSelector{
-	//		APIVersion: unstruct.GetAPIVersion(),
-	//		Kind:       unstruct.GroupVersionKind().Kind,
-	//		Namespace:  unstruct.GetNamespace(),
-	//		Name:       unstruct.GetName(),
-	//	}
-	//	m[selector] = unstruct
-	//}
-	//for _, manifest := range old.Spec.Manifest {
-	//	var unstruct unstructured.Unstructured
-	//	err := unstruct.UnmarshalJSON(manifest.Raw)
-	//	if err != nil {
-	//		klog.Errorf("Failed to unmarshal unstruct, error is: %v", err)
-	//	}
-	//	selector := distributionv1.ResourceSelector{
-	//		APIVersion: unstruct.GetAPIVersion(),
-	//		Kind:       unstruct.GroupVersionKind().Kind,
-	//		Namespace:  unstruct.GetNamespace(),
-	//		Name:       unstruct.GetName(),
-	//	}
-	//	_, ok := m[selector]
-	//	if !ok {
-	//		memberClient, err := c.getClusterClient(ctx, old)
-	//		if err != nil {
-	//			klog.Error("get cluster client failed:", err)
-	//			return err
-	//		}
-	//		err = memberClient.Delete(ctx, &unstruct)
-	//		if err != nil {
-	//			if errors.IsNotFound(err) {
-	//				continue
-	//			}
-	//			klog.Error("goroutine delete resource failed:", err)
-	//			return err
-	//		}
-	//		klog.Info("goroutine delete resource success")
-	//	}
-	//}
-	return nil
-}
-
 func (c *WorkloadController) OnDelete(obj interface{}) {
+	klog.Info("workload delete")
 	workoad, ok := obj.(*distributionv1.Workload)
 	if !ok {
 		klog.Error("workload convert failed")
@@ -770,12 +727,12 @@ func (c *WorkloadController) storeResourceKey(obj interface{}) {
 	//		Name:      unstruct.GetName(),
 	//	}
 	//	str := clusterName + "/" + WideKeyToString(wideKey)
-	//	c.Store.StoreResourcePointToWorkload(str, namespaceKey)
-	//	c.Store.StoreWorkloadPointToResource(namespaceKey, str)
+	//	c.KeyStore.StoreResourcePointToWorkload(str, namespaceKey)
+	//	c.KeyStore.StoreWorkloadPointToResource(namespaceKey, str)
 	//}
 }
 
-func (c WorkloadController) removeResourceKey(obj interface{}) error {
+func (c *WorkloadController) removeResourceKey(obj interface{}) error {
 	namespaceKey, err := toolscache.MetaNamespaceKeyFunc(obj)
 	if err != nil {
 		klog.Error("failed to get namespace key: ", err)
@@ -811,7 +768,13 @@ func (c *WorkloadController) getMemberInformer(ctx context.Context, clustername 
 		klog.Error("Failed to create dynamic client:", err)
 		return nil, err
 	}
-	informerManager := genericmanager.NewSingleClusterInformerManager(dynamicClient, 0, ctx.Done())
+	//informerManager := genericmanager.NewSingleClusterInformerManager(DynamicClient, 0, ctx.Done())
+
+	// 创建监听带有指定label的informer factory
+	optionsFunc := dynamicinformer.TweakListOptionsFunc(func(options *metav1.ListOptions) {
+		options.LabelSelector = fmt.Sprintf("%s=%s", constant.DistributionManaged, "true")
+	})
+	informerManager := genericmanager.NewSingleFilterClusterInformerManager(dynamicClient, 0, ctx.Done(), optionsFunc)
 	return informerManager, nil
 }
 

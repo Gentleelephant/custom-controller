@@ -66,6 +66,15 @@ func (k *ClusterWideKey) GroupVersion() schema.GroupVersion {
 	}
 }
 
+func (k *ClusterWideKey) ExcludeName() ClusterWideKey {
+	return ClusterWideKey{
+		Group:     k.Group,
+		Version:   k.Version,
+		Kind:      k.Kind,
+		Namespace: k.Namespace,
+	}
+}
+
 // ClusterWideKeyFunc generates a ClusterWideKey for object.
 func ClusterWideKeyFunc(obj interface{}) (ClusterWideKey, error) {
 	key := ClusterWideKey{}

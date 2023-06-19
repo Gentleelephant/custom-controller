@@ -2,8 +2,6 @@ package genericmanager
 
 import (
 	"context"
-	"fmt"
-	"github.com/Gentleelephant/custom-controller/pkg/constant"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sync"
 	"time"
@@ -64,9 +62,18 @@ type ClusterInformerManager interface {
 func NewSingleClusterInformerManager(client dynamic.Interface, defaultResync time.Duration, parentCh <-chan struct{}) ClusterInformerManager {
 	ctx, cancel := utils.ContextForChannel(parentCh)
 
-	optionsFunc := dynamicinformer.TweakListOptionsFunc(func(options *metav1.ListOptions) {
-		options.LabelSelector = fmt.Sprintf("%s=%s", constant.DistributionManaged, "true")
-	})
+	return &singleClusterInformerManagerImpl{
+		informerFactory: dynamicinformer.NewFilteredDynamicSharedInformerFactory(client, defaultResync, metav1.NamespaceAll, nil),
+		handlers:        make(map[schema.GroupVersionResource][]cache.ResourceEventHandler),
+		syncedInformers: make(map[schema.GroupVersionResource]struct{}),
+		ctx:             ctx,
+		cancel:          cancel,
+		client:          client,
+	}
+}
+
+func NewSingleFilterClusterInformerManager(client dynamic.Interface, defaultResync time.Duration, parentCh <-chan struct{}, optionsFunc dynamicinformer.TweakListOptionsFunc) ClusterInformerManager {
+	ctx, cancel := utils.ContextForChannel(parentCh)
 
 	return &singleClusterInformerManagerImpl{
 		informerFactory: dynamicinformer.NewFilteredDynamicSharedInformerFactory(client, defaultResync, metav1.NamespaceAll, optionsFunc),

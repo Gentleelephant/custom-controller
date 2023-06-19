@@ -1,8 +1,10 @@
 package utils
 
 import (
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"reflect"
 )
 
@@ -29,4 +31,13 @@ func SpecificationChanged(oldObj, newObj *unstructured.Unstructured) bool {
 	}
 
 	return !reflect.DeepEqual(oldBackup, newBackup)
+}
+
+// GetGroupVersionResource is a helper to map GVK(schema.GroupVersionKind) to GVR(schema.GroupVersionResource).
+func GetGroupVersionResource(restMapper meta.RESTMapper, gvk schema.GroupVersionKind) (schema.GroupVersionResource, error) {
+	restMapping, err := restMapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+	if err != nil {
+		return schema.GroupVersionResource{}, err
+	}
+	return restMapping.Resource, nil
 }
